@@ -1,0 +1,15 @@
+{
+  "name": "SnapClean AI",
+  "description": "Enterprise-grade AI photo management dashboard specializing in duplicate detection and intelligent categorization for massive libraries.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "AI-powered image analysis",
+    "Duplicate detection UI",
+    "Large-scale library management",
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "version": "2.4.0"
+}

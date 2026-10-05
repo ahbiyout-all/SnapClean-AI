@@ -1,0 +1,44 @@
+[package]
+name = "snapclean-app"
+version = "1.0.0"
+description = "AI Photo Management"
+authors = ["SnapClean Team"]
+edition = "2021"
+
+[lib]
+name = "snapclean_core"
+crate-type = ["cdylib", "rlib"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = ["protocol-asset"] }
+tauri-plugin-shell = "2.0.0"
+tauri-plugin-dialog = "2.0.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+walkdir = "2.4.0"
+rayon = "1.8.1"
+notify = "6.1.1"
+tokio = { version = "1.36.0", features = ["full"] }
+sqlx = { version = "0.7.3", features = ["sqlite", "runtime-tokio-native-tls"] }
+infer = "0.15.0"
+image = "0.24.9"
+kamadak-exif = "0.5.5"
+sha2 = "0.10.8"
+image_hasher = "1.2.0"
+sysinfo = "0.30.5"
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+ort = { version = "2.0.0-rc.9", default-features = false }
+ndarray = "0.15.6"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
+tracing-appender = "0.2.3"
+
+[features]
+# this feature is used for production builds or when `devPath` points to the filesystem
+# DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]

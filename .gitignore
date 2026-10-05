@@ -1,0 +1,103 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build Artifacts & Distribution
+dist/
+dist-ssr/
+build/
+out/
+bin/
+obj/
+*.tsbuildinfo
+
+# Binary Executables & Dynamic Libraries (Windows, Mac, Linux)
+*.exe
+*.dll
+*.so
+*.dylib
+*.node
+*.pdb
+*.msi
+*.app
+snapcleanai-portable*
+snapclean_core*
+
+# Mobile Packages (Android & iOS)
+*.apk
+*.aab
+*.ipa
+*.mobileconfig
+*.xcarchive
+snapcleanai-mobile*
+snapcleanai-ios*
+android/build/
+android/.gradle/
+ios/build/
+ios/Pods/
+
+# Rust & Tauri Builds
+src-tauri/target/
+target/
+Cargo.lock
+
+# Test Coverage & Temp
+coverage/
+.nyc_output/
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# Environment Variables & Credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.pfx
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE & Editor Configuration
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.sublime-workspace
+*.sublime-project
+*.suo
+*.ntvs*
+*.njsproj
+*.user
+*.userosv
+*.sln.docstates
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Duplicate Lockfiles (npm is primary)
+bun.lock
+bun.lockb
+yarn.lock
+pnpm-lock.yaml
+
+# Temporary & Migration Scripts
+*replace_keys*
+

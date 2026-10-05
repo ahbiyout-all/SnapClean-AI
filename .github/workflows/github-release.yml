@@ -1,0 +1,147 @@
+name: 'SnapClean AI - Cross-Platform Release CI/CD'
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v2.4.0, leave empty to read from package.json)'
+        required: false
+        default: ''
+      is_prerelease:
+        description: 'Mark as Pre-release'
+        type: boolean
+        default: false
+      is_draft:
+        description: 'Create as Draft Release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-release:
+    name: 'Build, Package & Publish Cross-Platform Assets'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: TypeScript Lint & Code Quality Verification
+        run: npm run lint
+
+      - name: Synchronize Version
+        run: node scripts/version-manager.js sync
+
+      - name: Build Web Application Bundle
+        run: npm run build
+
+      - name: Build Native DLL and Backend Simulation Modules
+        run: npm run build:dll
+
+      - name: Package Cross-Platform Installers (PC .exe / Android .apk / iOS .ipa & .mobileconfig)
+        run: npm run release:build
+
+      - name: Determine Release Tag and Extract Changelog Notes
+        id: release_meta
+        shell: bash
+        run: |
+          # 1. Determine Tag Name
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG_NAME="${{ github.event.inputs.tag_name }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF_NAME}"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            TAG_NAME="v${VERSION}"
+          fi
+          
+          # Clean version string (remove 'v' prefix for search)
+          RAW_VERSION="${TAG_NAME#v}"
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "RAW_VERSION=$RAW_VERSION" >> $GITHUB_OUTPUT
+          echo "Building release for: $TAG_NAME (v$RAW_VERSION)"
+
+          # 2. Extract Release Notes using Node.js for 100% Reliability
+          node -e "
+            const fs = require('fs');
+            const version = '$RAW_VERSION';
+            let notes = '## 🚀 SnapClean AI Release ' + '$TAG_NAME' + '\n\n';
+            notes += 'Cross-platform installation binaries for Windows PC, Android, and Apple iOS.\n\n';
+            try {
+              if (fs.existsSync('docs/PATCHNOTES.md')) {
+                const patchnotes = fs.readFileSync('docs/PATCHNOTES.md', 'utf8');
+                const regex = new RegExp('##\\\\s*📌\\\\s*\\\\[v?' + version + '\\\\][^\\\\n]*\\\\n([\\\\s\\\\S]*?)(?=\\\\n##\\\\s*📌|$)');
+                const match = patchnotes.match(regex);
+                if (match && match[1]) {
+                  notes += match[1].trim();
+                } else {
+                  notes += '### Changes in this build\n- Automated unified cross-platform packaging\n- Real-time GitHub Releases auto-update pipeline';
+                }
+              }
+            } catch (err) {
+              console.error('Failed to parse notes:', err);
+            }
+            fs.writeFileSync('release_notes.md', notes);
+          "
+
+      - name: Generate Job Summary Table with Checksums
+        shell: bash
+        run: |
+          echo "### 📦 SnapClean AI Cross-Platform Release Assets (${{ steps.release_meta.outputs.TAG_NAME }})" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | File Name | Size | SHA-256 Checksum |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          
+          for file in dist/releases/*; do
+            if [ -f "$file" ]; then
+              fname=$(basename "$file")
+              fsize=$(ls -lh "$file" | awk '{print $5}')
+              fhash=$(sha256sum "$file" | awk '{print $1}')
+              
+              platform="General"
+              if [[ "$fname" == *.exe ]]; then platform="🖥️ Windows PC (.exe)"; fi
+              if [[ "$fname" == *.apk ]]; then platform="📱 Android (.apk)"; fi
+              if [[ "$fname" == *.ipa ]]; then platform="🍎 Apple iOS (.ipa)"; fi
+              if [[ "$fname" == *.mobileconfig ]]; then platform="🍎 Apple iOS WebClip Profile"; fi
+              if [[ "$fname" == *.plist ]]; then platform="🍎 Apple OTA Manifest"; fi
+              if [[ "$fname" == *.json ]]; then platform="📄 Release Manifest"; fi
+              
+              echo "| $platform | \`$fname\` | $fsize | \`${fhash:0:16}...\` |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+      - name: Publish GitHub Release & Attach Cross-Platform Installers
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_meta.outputs.TAG_NAME }}
+          name: SnapClean AI ${{ steps.release_meta.outputs.TAG_NAME }}
+          body_path: release_notes.md
+          draft: ${{ github.event.inputs.is_draft || false }}
+          prerelease: ${{ github.event.inputs.is_prerelease || false }}
+          generate_release_notes: true
+          files: |
+            dist/releases/*.exe
+            dist/releases/*.apk
+            dist/releases/*.ipa
+            dist/releases/*.mobileconfig
+            dist/releases/*.plist
+            dist/releases/*.json
+            dist/build-info.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,38 @@
+
+  <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#0f172a" />
+        <stop offset="100%" stop-color="#1e293b" />
+      </linearGradient>
+      <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#38bdf8" />
+        <stop offset="100%" stop-color="#6366f1" />
+      </linearGradient>
+      <linearGradient id="sparkle" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#34d399" />
+        <stop offset="100%" stop-color="#10b981" />
+      </linearGradient>
+    </defs>
+    
+    <!-- Background -->
+    <rect width="512" height="512" rx="112.64" fill="url(#bg)" />
+    
+    <!-- Outer Glow Ring -->
+    <circle cx="256" cy="256" r="189.2352" fill="none" stroke="url(#accent)" stroke-width="17.92" opacity="0.4" />
+    
+    <!-- Camera Body / Lens -->
+    <rect x="112.64" y="143.36" width="286.72" height="225.28" rx="40.96" fill="none" stroke="url(#accent)" stroke-width="20.48" />
+    
+    <!-- Camera Flash / Top -->
+    <path d="M 184.32 143.36 L 215.04 102.4 L 296.96 102.4 L 327.68 143.36 Z" fill="url(#accent)" opacity="0.8" />
+    
+    <!-- Lens Circle -->
+    <circle cx="256" cy="256" r="71.68" fill="url(#accent)" opacity="0.9" />
+    <circle cx="256" cy="256" r="40.96" fill="#0f172a" />
+    <circle cx="271.36" cy="240.64" r="12.8" fill="#ffffff" />
+    
+    <!-- Sparkle / Clean AI Magic Star -->
+    <path d="M 368.64 122.88 Q 368.64 153.6 399.36 153.6 Q 368.64 153.6 368.64 184.32 Q 368.64 153.6 337.92 153.6 Q 368.64 153.6 368.64 122.88 Z" fill="url(#sparkle)" />
+  </svg>
+  
