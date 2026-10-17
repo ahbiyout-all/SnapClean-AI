@@ -19,6 +19,9 @@ export { FunnelEngine } from './funnelEngine';
 
 export { PeopleEngine } from './peopleEngine';
 
+export { FastViewEngine, fastViewEngine } from './fastViewEngine';
+export type { FastThumbnailResult, FastViewStats } from './fastViewEngine';
+
 export { PhotoLibraryManager } from './PhotoLibraryManager';
 
 export { SystemAPI } from './systemApi';
@@ -28,6 +31,7 @@ export const ENGINE_DLL_METADATA = {
   version: '2.4.0',
   architecture: 'hybrid-native-wasm-js',
   nativeLibrary: 'snapclean_core.dll',
+  fastViewLibrary: 'snapclean_fastview.dll',
   startupOptimized: true,
   engines: [
     'PhotoEngine',
@@ -36,6 +40,7 @@ export const ENGINE_DLL_METADATA = {
     'BurstEngine',
     'FunnelEngine',
     'PeopleEngine',
+    'FastViewEngine (Sub-millisecond EXIF Thumbnail Extraction & Caching)',
     'PhotoLibraryManager'
   ]
 };

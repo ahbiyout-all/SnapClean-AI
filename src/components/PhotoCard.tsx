@@ -21,10 +21,12 @@ import {
   Shield,
   ScanText,
   Music,
-  Volume2
+  Volume2,
+  Maximize2
 } from 'lucide-react';
 import { getLocalizedCategory } from '../utils/categoryUtils';
 import { SystemAPI } from '../services/systemApi';
+import { Tooltip } from './Tooltip';
 
 export interface PhotoCardProps {
   key?: React.Key | string | number;
@@ -38,6 +40,10 @@ export interface PhotoCardProps {
   onEnhance?: (p: PhotoRecord) => void;
   onSwipe?: (direction: 'left' | 'right', photo: PhotoRecord) => void;
   addNotification?: (title: string, message: string, type: 'info' | 'success' | 'warning' | 'error') => void;
+  onDoubleClick?: (photo: PhotoRecord) => void;
+  infoDensity?: 'clean' | 'compact' | 'detailed';
+  preserveAspect?: boolean;
+  onInspect?: (photo: PhotoRecord) => void;
 }
 
 const KeyframeAnimator = ({ keyframes, photoId }: { keyframes: string[], photoId: string | number | undefined }) => {
@@ -68,6 +74,7 @@ const KeyframeAnimator = ({ keyframes, photoId }: { keyframes: string[], photoId
 };
 
 import { libraryManager } from '../services/PhotoLibraryManager';
+import { fastViewEngine } from '../services/fastViewEngine';
 
 export const PhotoCard: React.FC<PhotoCardProps> = ({ 
   photo, 
@@ -80,7 +87,10 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   onEnhance, 
   onSwipe,
   addNotification,
-  onDoubleClick
+  onDoubleClick,
+  infoDensity = 'compact',
+  preserveAspect = false,
+  onInspect,
 }) => {
   const { t } = useI18n();
   const fallbackInstanceId = React.useId();
@@ -88,7 +98,8 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   const [isHovered, setIsHovered] = useState(false);
   const [loadErrorCount, setLoadErrorCount] = useState(0);
   const [isScanning, setIsScanning] = useState(false);
-  const [imgSrc, setImgSrc] = React.useState<string | null>(null);
+  const [imgSrc, setImgSrc] = React.useState<string | null>(() => fastViewEngine.getInstantThumbnail(photo.path));
+  const dominantColor = React.useMemo(() => fastViewEngine.getInstantDominantColor(photo.path), [photo.path]);
   const [isIntersecting, setIsIntersecting] = useState(false);
   const cardRef = React.useRef<HTMLDivElement>(null);
   const isMountedRef = React.useRef(true);
@@ -158,32 +169,29 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 
     const loadThumb = () => {
       if (isPdf || isAudio || isDocText) return; // Prevent loading thumbnails for documents or audio tracks
-      if (photo.thumbnail && photo.thumbnail.size > 0) {
-        if (active && isMountedRef.current) {
-          // Centralized path-aware blob URL
-          const url = libraryManager.getBlobUrl(photo.path, () => URL.createObjectURL(photo.thumbnail!));
-          if (url) setImgSrc(url);
-        }
-        return;
-      }
-      if (photo.blob && photo.blob.size > 0) {
-        if (active && isMountedRef.current) {
-          // Fallback to full blob if thumbnail isn't generated yet
-          const url = libraryManager.getBlobUrl(photo.path, () => URL.createObjectURL(photo.blob!));
-          if (url) setImgSrc(url);
-        }
-        return;
-      }
       
-      if (photo.path && isMountedRef.current && !imgSrc && !isVideo && !isPdf && !isAudio && !isDocText) {
-        SystemAPI.getThumbnailData(photo.path).then((url) => {
-          if (active && url && isMountedRef.current) {
-            setImgSrc(url);
-          }
-        }).catch(() => {
-          if (active && isMountedRef.current) setImgSrc(null);
-        });
+      // Check if already in FastView L1 Cache
+      const instant = fastViewEngine.getInstantThumbnail(photo.path);
+      if (instant) {
+        if (active && isMountedRef.current) setImgSrc(instant);
+        return;
       }
+
+      fastViewEngine.getFastThumbnail(photo)
+        .then((res) => {
+          if (active && res.url && isMountedRef.current) {
+            setImgSrc(res.url);
+          }
+        })
+        .catch(() => {
+          if (photo.path && active && isMountedRef.current) {
+            SystemAPI.getThumbnailData(photo.path).then(url => {
+              if (active && url && isMountedRef.current) setImgSrc(url);
+            }).catch(() => {
+              if (active && isMountedRef.current) setImgSrc(null);
+            });
+          }
+        });
     };
 
     let timeoutId: any = null;
@@ -201,14 +209,14 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         }
 
         if (entry.isIntersecting) {
-          // Phase 41.3: Infinite Scroll Race Condition 防御
+          // Ultra-fast 30ms entry for snappy 60fps scrolling
           timeoutId = setTimeout(() => {
             if (active && isMountedRef.current) {
               loadThumb();
             }
-          }, 150); // Debounce visual entry by 150ms to ignore rapid fly-bys
+          }, 30);
         }
-      }, { rootMargin: '350px' });
+      }, { rootMargin: '450px' });
       observer.observe(cardRef.current);
     }
 
@@ -216,9 +224,8 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
       active = false;
       if (timeoutId) clearTimeout(timeoutId);
       if (observer) observer.disconnect();
-      // Revocation is now handled globally or by the manager to prevent "Image Load Error"
     };
-  }, [photo.path, imgSrc]);
+  }, [photo.path, photo.thumbnail, photo.blob]);
 
   const handleShowInExplorer = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -245,30 +252,39 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
       onContextMenu={(e: any) => {
         if (onContextMenu && isIntersecting) {
           e.preventDefault();
+          fastViewEngine.triggerHaptic('medium');
           onContextMenu(e, photo);
         }
       }}
-      onClick={(e: any) => onClick?.(e as any)}
+      onClick={(e: any) => {
+        fastViewEngine.triggerHaptic('light');
+        onClick?.(e as any);
+      }}
       onDoubleClick={(e: React.MouseEvent) => {
         e.stopPropagation();
         e.preventDefault();
+        fastViewEngine.triggerHaptic('heavy');
         if (onDoubleClick) {
           onDoubleClick(photo);
         } else {
           SystemAPI.openInDefaultApp(photo, addNotification);
         }
       }}
-      className={`relative group aspect-square rounded-2xl overflow-hidden border-2 transition-all cursor-pointer photo-card touch-pan-y ${
+      className={`relative group ${preserveAspect ? 'aspect-auto min-h-[160px]' : 'aspect-square'} rounded-2xl overflow-hidden border-2 transition-all cursor-pointer photo-card cv-card gpu-accelerated touch-pan-y ${
         selected ? 'border-blue-500 photo-card-selected' : selectionMode === 'delete' ? 'border-rose-500/80 saturate-50 opacity-80 scale-95 photo-card-delete' : selectionMode === 'keep' ? 'border-emerald-500 scale-105 shadow-xl shadow-emerald-500/20 z-10 photo-card-keep' : isBest ? 'border-emerald-500/50' : photo.blurScore !== undefined && photo.blurScore < 0.3 ? 'border-rose-500/40 opacity-90' : 'border-white/5 opacity-80 hover:opacity-100'
       }`}
     >
       {/* Universal Placeholder / Loading State */}
-      <div className={`absolute inset-0 bg-slate-900 border border-white/5 flex flex-col items-center justify-center p-4 transition-opacity duration-500 pointer-events-none ${imgSrc ? 'opacity-0' : 'opacity-100'}`}>
-        <ImageIcon className={`text-slate-800 mb-1 ${!imgSrc ? 'animate-pulse' : ''}`} size={32} />
-        <span className="text-[10px] font-black text-slate-500 uppercase tracking-tighter mb-1">
-          {photo.path.startsWith('/web-local/') ? t('localAsset') : 'Indexing Asset...'}
+      <div 
+        style={{ backgroundColor: dominantColor }}
+        className={`absolute inset-0 border border-white/5 flex flex-col items-center justify-center p-4 transition-opacity duration-300 pointer-events-none ${imgSrc ? 'opacity-0' : 'opacity-95'}`}
+      >
+        <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/60 pointer-events-none" />
+        <ImageIcon className={`text-white/40 mb-1 ${!imgSrc ? 'animate-pulse' : ''}`} size={32} />
+        <span className="text-[10px] font-black text-white/80 uppercase tracking-tighter mb-1 relative z-10">
+          {photo.path.startsWith('/web-local/') ? t('localAsset') : 'FastView Stream'}
         </span>
-        <span className="text-[8px] font-mono text-slate-700 select-none uppercase tracking-widest truncate max-w-full">
+        <span className="text-[8px] font-mono text-white/50 select-none uppercase tracking-widest truncate max-w-full relative z-10">
           {photo.path.split('/').pop()}
         </span>
       </div>
@@ -284,91 +300,125 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           <motion.div style={{ backgroundColor: bgOverlay }} className="absolute inset-0 z-[1] pointer-events-none" />
 
       {/* Quality & Status Badges */}
-      <div className="absolute top-2 left-2 flex flex-col gap-1 z-20">
-        {photo.status === 'missing' && (
-          <span className="flex items-center gap-1 bg-rose-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-lg uppercase tracking-tighter">
-            <AlertCircle size={8} /> {t('missing')}
-          </span>
-        )}
-        {loadErrorCount > 0 && (
-           <span className="flex items-center gap-1 bg-amber-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-lg uppercase tracking-tighter">
-            <AlertCircle size={8} /> Retrying...
-          </span>
-        )}
-        {photo.qualityTags?.map((tag, i) => (
-          <span key={`${cardUniqueId}-${tag}-${i}`} className="bg-slate-900/80 backdrop-blur-sm text-amber-500 text-[8px] font-black px-2 py-0.5 rounded-full border border-amber-500/30 uppercase tracking-tighter">
-            {tag}
-          </span>
-        ))}
-        {isBest && (
-          <span className="bg-emerald-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-sm flex items-center gap-1 w-fit shadow-lg uppercase tracking-tighter">
-            <Zap size={8} className="fill-white" /> {t('best')}
-          </span>
-        )}
-        {photo.isEnhanced && (
-          <span className="bg-purple-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-sm flex items-center gap-1 w-fit shadow-lg uppercase tracking-tighter">
-            <Sparkles size={8} className="fill-white" /> {photo.enhancementType}
-          </span>
-        )}
-        {similarity !== undefined && similarity < 100 && (
-          <span className="bg-indigo-600/90 backdrop-blur-sm text-white text-[8px] font-black px-2 py-0.5 rounded-full border border-indigo-400/30 uppercase tracking-tighter">
-            {similarity}% Similar
-          </span>
-        )}
-        {photo.aestheticScore !== undefined && (
-          <span className="bg-blue-500/80 backdrop-blur-sm text-white text-[10px] font-bold px-1.5 py-0.5 rounded-sm w-fit border border-white/10">
-            {t('score')}: {photo.aestheticScore.toFixed(1)}/10
-          </span>
-        )}
-        {photo.blurScore !== undefined && (
-          <span className={`backdrop-blur-sm text-white text-[10px] font-bold px-1.5 py-0.5 rounded-sm w-fit border border-white/10 ${photo.blurScore < 0.3 ? 'bg-rose-500/90' : 'bg-slate-800/80'}`}>
-            Blur: {photo.blurScore.toFixed(2)}
-          </span>
-        )}
-        {photo.blurScore !== undefined && photo.blurScore < 0.3 && (
-          <span className="bg-rose-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-lg uppercase tracking-tighter flex items-center gap-1">
-            <AlertCircle size={8} /> {t('blurryAsset')}
-          </span>
-        )}
-        {photo.category && (
-          <span className="bg-indigo-500/80 backdrop-blur-sm text-white text-[8px] font-bold px-1.5 py-0.5 rounded-sm w-fit uppercase">
-            {getLocalizedCategory(photo.category, t)}
-          </span>
-        )}
-        {photo.detectedFaces !== undefined && photo.detectedFaces > 0 && (
-          <span className="bg-pink-500/80 backdrop-blur-sm text-white text-[8px] font-bold px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1">
-            <Users size={8} /> {photo.detectedFaces}
-          </span>
-        )}
-        {isGif && (
-          <span className="bg-fuchsia-600/90 backdrop-blur-sm text-white text-[10px] font-black px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1 border border-fuchsia-400/30 shadow-lg">
-            GIF {photo.frameCount ? `(${photo.frameCount}F)` : ''}
-          </span>
-        )}
-        {isVideo && (
-          <span className="bg-sky-600/90 backdrop-blur-sm text-white text-[10px] font-black px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1 border border-sky-400/30 shadow-lg">
-            <Video size={8} /> VIDEO {photo.durationMs ? `(${Math.round(photo.durationMs/1000)}s)` : ''}
-          </span>
-        )}
-        {isPdf && (
-          <span className="bg-red-600/90 backdrop-blur-sm text-white text-[10px] font-black px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1 border border-red-400/30 shadow-lg">
-            <FileText size={8} /> DOCUMENT
-          </span>
-        )}
-        {isAudio && (
-          <span className="bg-fuchsia-600/90 backdrop-blur-sm text-white text-[10px] font-black px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1 border border-fuchsia-400/30 shadow-lg">
-            <Music size={8} /> AUDIO
-          </span>
-        )}
-        {isDocText && (
-          <span className="bg-emerald-600/90 backdrop-blur-sm text-white text-[10px] font-black px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1 border border-emerald-400/30 shadow-lg">
-            <FileText size={8} /> {photo.path?.split('.').pop()?.toUpperCase()}
-          </span>
-        )}
-        <span className="bg-black/60 backdrop-blur-sm text-white text-[10px] font-mono px-1.5 py-0.5 rounded-sm">
-          {(photo.size / 1024 / 1024).toFixed(1)}MB
-        </span>
-      </div>
+      {(infoDensity !== 'clean' || isHovered) && (
+        <div className="absolute top-2 left-2 flex flex-col gap-1 z-20 transition-opacity duration-200">
+          {infoDensity === 'compact' ? (
+            <>
+              {photo.status === 'missing' && (
+                <span className="flex items-center gap-1 bg-rose-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-lg uppercase tracking-tighter">
+                  <AlertCircle size={8} /> {t('missing')}
+                </span>
+              )}
+              {isBest && (
+                <span className="bg-emerald-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-sm flex items-center gap-1 w-fit shadow-lg uppercase tracking-tighter">
+                  <Zap size={8} className="fill-white" /> {t('best')}
+                </span>
+              )}
+              {isVideo && (
+                <span className="bg-sky-600/90 backdrop-blur-sm text-white text-[8px] font-black px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1">
+                  <Video size={8} /> VIDEO
+                </span>
+              )}
+              <div className="flex items-center gap-1">
+                {photo.width && photo.height && (
+                  <span className="bg-black/60 backdrop-blur-sm text-white text-[8px] font-mono px-1.5 py-0.5 rounded-sm">
+                    {photo.width >= 3840 ? '4K' : photo.width >= 1920 ? 'FHD' : `${photo.width}x${photo.height}`}
+                  </span>
+                )}
+                <span className="bg-black/60 backdrop-blur-sm text-white text-[8px] font-mono px-1.5 py-0.5 rounded-sm">
+                  {(photo.size / 1024 / 1024).toFixed(1)}MB
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              {photo.status === 'missing' && (
+                <span className="flex items-center gap-1 bg-rose-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-lg uppercase tracking-tighter">
+                  <AlertCircle size={8} /> {t('missing')}
+                </span>
+              )}
+              {loadErrorCount > 0 && (
+                 <span className="flex items-center gap-1 bg-amber-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-lg uppercase tracking-tighter">
+                  <AlertCircle size={8} /> Retrying...
+                </span>
+              )}
+              {photo.qualityTags?.map((tag, i) => (
+                <span key={`${cardUniqueId}-${tag}-${i}`} className="bg-slate-900/80 backdrop-blur-sm text-amber-500 text-[8px] font-black px-2 py-0.5 rounded-full border border-amber-500/30 uppercase tracking-tighter">
+                  {tag}
+                </span>
+              ))}
+              {isBest && (
+                <span className="bg-emerald-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-sm flex items-center gap-1 w-fit shadow-lg uppercase tracking-tighter">
+                  <Zap size={8} className="fill-white" /> {t('best')}
+                </span>
+              )}
+              {photo.isEnhanced && (
+                <span className="bg-purple-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-sm flex items-center gap-1 w-fit shadow-lg uppercase tracking-tighter">
+                  <Sparkles size={8} className="fill-white" /> {photo.enhancementType}
+                </span>
+              )}
+              {similarity !== undefined && similarity < 100 && (
+                <span className="bg-indigo-600/90 backdrop-blur-sm text-white text-[8px] font-black px-2 py-0.5 rounded-full border border-indigo-400/30 uppercase tracking-tighter">
+                  {similarity}% Similar
+                </span>
+              )}
+              {photo.aestheticScore !== undefined && (
+                <span className="bg-blue-500/80 backdrop-blur-sm text-white text-[10px] font-bold px-1.5 py-0.5 rounded-sm w-fit border border-white/10">
+                  {t('score')}: {photo.aestheticScore.toFixed(1)}/10
+                </span>
+              )}
+              {photo.blurScore !== undefined && (
+                <span className={`backdrop-blur-sm text-white text-[10px] font-bold px-1.5 py-0.5 rounded-sm w-fit border border-white/10 ${photo.blurScore < 0.3 ? 'bg-rose-500/90' : 'bg-slate-800/80'}`}>
+                  Blur: {photo.blurScore.toFixed(2)}
+                </span>
+              )}
+              {photo.blurScore !== undefined && photo.blurScore < 0.3 && (
+                <span className="bg-rose-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-lg uppercase tracking-tighter flex items-center gap-1">
+                  <AlertCircle size={8} /> {t('blurryAsset')}
+                </span>
+              )}
+              {photo.category && (
+                <span className="bg-indigo-500/80 backdrop-blur-sm text-white text-[8px] font-bold px-1.5 py-0.5 rounded-sm w-fit uppercase">
+                  {getLocalizedCategory(photo.category, t)}
+                </span>
+              )}
+              {photo.detectedFaces !== undefined && photo.detectedFaces > 0 && (
+                <span className="bg-pink-500/80 backdrop-blur-sm text-white text-[8px] font-bold px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1">
+                  <Users size={8} /> {photo.detectedFaces}
+                </span>
+              )}
+              {isGif && (
+                <span className="bg-fuchsia-600/90 backdrop-blur-sm text-white text-[10px] font-black px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1 border border-fuchsia-400/30 shadow-lg">
+                  GIF {photo.frameCount ? `(${photo.frameCount}F)` : ''}
+                </span>
+              )}
+              {isVideo && (
+                <span className="bg-sky-600/90 backdrop-blur-sm text-white text-[10px] font-black px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1 border border-sky-400/30 shadow-lg">
+                  <Video size={8} /> VIDEO {photo.durationMs ? `(${Math.round(photo.durationMs/1000)}s)` : ''}
+                </span>
+              )}
+              {isPdf && (
+                <span className="bg-red-600/90 backdrop-blur-sm text-white text-[10px] font-black px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1 border border-red-400/30 shadow-lg">
+                  <FileText size={8} /> DOCUMENT
+                </span>
+              )}
+              {isAudio && (
+                <span className="bg-fuchsia-600/90 backdrop-blur-sm text-white text-[10px] font-black px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1 border border-fuchsia-400/30 shadow-lg">
+                  <Music size={8} /> AUDIO
+                </span>
+              )}
+              {isDocText && (
+                <span className="bg-emerald-600/90 backdrop-blur-sm text-white text-[10px] font-black px-1.5 py-0.5 rounded-sm w-fit uppercase flex items-center gap-1 border border-emerald-400/30 shadow-lg">
+                  <FileText size={8} /> {photo.path?.split('.').pop()?.toUpperCase()}
+                </span>
+              )}
+              <span className="bg-black/60 backdrop-blur-sm text-white text-[10px] font-mono px-1.5 py-0.5 rounded-sm">
+                {(photo.size / 1024 / 1024).toFixed(1)}MB
+              </span>
+            </>
+          )}
+        </div>
+      )}
 
           {!isPdf && !isAudio && !isDocText && imgSrc && (
             <img 
@@ -605,24 +655,45 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 
 
 
-      <div className="absolute bottom-0 inset-x-0 bg-linear-to-t from-black/90 p-2 opacity-0 group-hover:opacity-100 transition-opacity z-20 flex items-center justify-between">
-        <p className="text-[9px] text-white/70 truncate flex-1">{photo.path}</p>
-        <button 
-          onClick={handleShowInExplorer}
-          className="p-1.5 hover:bg-white/10 rounded-lg text-blue-400 transition-colors"
-          title={t('openInNativeExplorer')}
+      <div className="absolute bottom-0 inset-x-0 bg-linear-to-t from-black/90 p-2 opacity-0 group-hover:opacity-100 transition-opacity z-20 flex items-center justify-between gap-1">
+        <p className="text-[9px] text-white/70 truncate flex-1" title={photo.path}>{photo.path}</p>
+        {onInspect && (
+          <Tooltip
+            title={t('inspectPhoto') || '정밀 분석'}
+            content="전체화면에서 줌인, 상세 EXIF 메타데이터 및 비교 뷰어를 엽니다."
+          >
+            <button 
+              onClick={(e) => { e.stopPropagation(); onInspect(photo); }}
+              className="p-1.5 hover:bg-white/20 bg-white/10 rounded-lg text-emerald-400 transition-colors shrink-0 cursor-pointer"
+            >
+              <Maximize2 size={13} />
+            </button>
+          </Tooltip>
+        )}
+        <Tooltip
+          title={t('openInNativeExplorer') || '탐색기에서 열기'}
+          content="Windows 파일 탐색기에서 해당 파일의 저장 위치를 엽니다."
         >
-          <ArrowRight size={14} className="-rotate-45" />
-        </button>
+          <button 
+            onClick={handleShowInExplorer}
+            className="p-1.5 hover:bg-white/10 rounded-lg text-blue-400 transition-colors shrink-0 cursor-pointer"
+          >
+            <ArrowRight size={14} className="-rotate-45" />
+          </button>
+        </Tooltip>
       </div>
       {onEnhance && !photo.isEnhanced && (
-        <button 
-          onClick={(e) => { e.stopPropagation(); onEnhance(photo); }}
-          className="absolute bottom-2 right-2 p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-all z-30"
-          title={t('aiEnhance')}
+        <Tooltip
+          title={t('aiEnhance') || 'AI 화질 개선'}
+          content="AI 신경망을 통해 초해상도 업스케일링 및 조명/색감을 자동 보정합니다."
         >
-          <Sparkles size={14} />
-        </button>
+          <button 
+            onClick={(e) => { e.stopPropagation(); onEnhance(photo); }}
+            className="absolute bottom-2 right-2 p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-all z-30 cursor-pointer"
+          >
+            <Sparkles size={14} />
+          </button>
+        </Tooltip>
       )}
       </>
       )}

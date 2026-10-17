@@ -19,7 +19,7 @@
 ## 2. 안드로이드 (Android) APK 설치 가이드
 
 1. **APK 파일 다운로드**:
-   - 앱 내 업데이트 창 또는 [GitHub Releases](https://github.com/AhBiYout/AhBiYout-all/releases)에서 `snapcleanai-mobile-v{version}.apk`를 다운로드합니다.
+   - 앱 내 업데이트 창 또는 [GitHub Releases](https://github.com/AhBiYout-all/SnapClean-AI/releases)에서 `snapcleanai-mobile-v{version}.apk`를 다운로드합니다.
 2. **설치 허용**:
    - 다운로드 완료 팝업 또는 파일 관리자에서 APK를 터치합니다.
    - *"보안상의 이유로 이 출처의 알 수 없는 앱을 설치할 수 없습니다"* 경고가 뜨면 **[설정]**으로 이동합니다.

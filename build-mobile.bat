@@ -5,7 +5,7 @@ setlocal enabledelayedexpansion
 :: SnapClean AI - Mobile Android Package Builder
 :: Target: Android APK (snapcleanai-mobile-v%APP_VER%.apk)
 :: Note: iPhone (iOS) installation file generation is suspended.
-:: Repository: https://github.com/AhBiYout/AhBiYout-all
+:: Repository: https://github.com/AhBiYout-all/SnapClean-AI
 :: ============================================================================
 
 title SnapClean AI - Mobile Package Builder

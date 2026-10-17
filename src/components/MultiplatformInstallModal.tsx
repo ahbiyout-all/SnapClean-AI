@@ -44,7 +44,7 @@ export const MultiplatformInstallModal: React.FC<MultiplatformInstallModalProps>
   if (!isOpen) return null;
 
   const version = APP_VERSION_INFO.version;
-  const githubRepo = 'AhBiYout/AhBiYout-all';
+  const githubRepo = 'AhBiYout-all/SnapClean-AI';
   const releaseUrl = `https://github.com/${githubRepo}/releases/tag/v${version}`;
 
   const copyToClipboard = (text: string, key: string) => {

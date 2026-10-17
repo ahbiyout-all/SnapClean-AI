@@ -91,7 +91,7 @@ export const UpdateNotificationModal: React.FC<UpdateNotificationModalProps> = (
   };
 
   const handleOpenReleasePage = () => {
-    const url = release?.htmlUrl || 'https://github.com/AhBiYout/SnapClean-AI/releases';
+    const url = release?.htmlUrl || 'https://github.com/AhBiYout-all/SnapClean-AI/releases';
     window.open(url, '_blank');
   };
 
@@ -290,7 +290,7 @@ export const UpdateNotificationModal: React.FC<UpdateNotificationModalProps> = (
                       Apple 공식 구성 프로필(.mobileconfig)을 다운로드하여 홈 화면에 즉시 네이티브 풀스크린 앱으로 추가합니다.
                     </p>
                     <a
-                      href={iosProfileAsset?.downloadUrl || `https://github.com/AhBiYout/AhBiYout-all/releases/download/v${latestVersion}/snapcleanai-ios.mobileconfig`}
+                      href={iosProfileAsset?.downloadUrl || `https://github.com/AhBiYout-all/SnapClean-AI/releases/download/v${latestVersion}/snapcleanai-ios.mobileconfig`}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-block mt-1 text-[11px] font-bold text-purple-300 hover:text-purple-200 underline"
@@ -309,7 +309,7 @@ export const UpdateNotificationModal: React.FC<UpdateNotificationModalProps> = (
                       PC의 AltStore 또는 Sideloadly 프로그램으로 IPA 파일을 아이폰에 직접 서명 설치할 수 있습니다.
                     </p>
                     <a
-                      href={iosIpaAsset?.downloadUrl || `https://github.com/AhBiYout/AhBiYout-all/releases/download/v${latestVersion}/snapcleanai-ios-v${latestVersion}.ipa`}
+                      href={iosIpaAsset?.downloadUrl || `https://github.com/AhBiYout-all/SnapClean-AI/releases/download/v${latestVersion}/snapcleanai-ios-v${latestVersion}.ipa`}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-block mt-1 text-[11px] font-bold text-indigo-400 hover:text-indigo-300 underline"

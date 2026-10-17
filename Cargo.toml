@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "src-tauri",
+    "crates/wasm-dedupe-engine"
+]
+resolver = "2"

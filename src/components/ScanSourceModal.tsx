@@ -22,14 +22,14 @@ export const ScanSourceModal: React.FC<ScanSourceModalProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
         {/* Backdrop */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
-          className="absolute inset-0 bg-slate-950/80 backdrop-blur-md"
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-md"
         />
 
         {/* Modal Window */}
@@ -38,7 +38,7 @@ export const ScanSourceModal: React.FC<ScanSourceModalProps> = ({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
           transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-          className="relative w-full max-w-lg bg-slate-900/95 border border-slate-700/60 rounded-3xl p-6 sm:p-7 shadow-2xl text-white z-10 overflow-hidden"
+          className="relative w-full max-w-lg max-h-[92dvh] overflow-y-auto custom-scrollbar bg-slate-900/95 border border-slate-700/60 rounded-3xl p-5 sm:p-7 shadow-2xl text-white z-10 my-auto"
         >
           {/* Subtle Accent Glow */}
           <div className="absolute -top-24 -right-24 w-48 h-48 bg-indigo-500/15 rounded-full blur-3xl pointer-events-none" />

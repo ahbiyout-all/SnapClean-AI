@@ -102,9 +102,9 @@ npm run lint
   "channel": "stable",
   "engine": "Dexie+pHash-v2.4+NativeDLL+Telemetry+GitHubLiveUpdater",
   "github": {
-    "owner": "AhBiYout",
-    "repo": "AhBiYout-all",
-    "releasesUrl": "https://github.com/AhBiYout/AhBiYout-all/releases"
+    "owner": "AhBiYout-all",
+    "repo": "SnapClean-AI",
+    "releasesUrl": "https://github.com/AhBiYout-all/SnapClean-AI/releases"
   },
   "environment": "production",
   "latestPatchSummary": "GitHub Releases 기반 실시간 자동 업데이트 시스템 및 깃허브 자동화 파이프라인 구축"
@@ -115,10 +115,10 @@ npm run lint
 
 ## 6. GitHub 자동 배포 및 동기화 파이프라인 (GitHub Automation)
 
-- **공식 계정**: `AhBiYout`
-- **저장소 이름**: `AhBiYout-all`
-- **GitHub 저장소 URL**: `https://github.com/AhBiYout/AhBiYout-all`
-- **GitHub Releases URL**: `https://github.com/AhBiYout/AhBiYout-all/releases`
+- **공식 계정**: `AhBiYout-all`
+- **저장소 이름**: `SnapClean-AI`
+- **GitHub 저장소 URL**: `https://github.com/AhBiYout-all/SnapClean-AI`
+- **GitHub Releases URL**: `https://github.com/AhBiYout-all/SnapClean-AI/releases`
 
 ### 6.1. Windows 원클릭 깃허브 배포 스크립트 (`github-push.bat`)
 Windows 환경에서 실행하여 버전 동기화, 위생 검사, 커밋 및 태그 생성을 원클릭으로 진행합니다:
@@ -154,7 +154,7 @@ npm run version:patch
 
 ## 7. GitHub Releases 기반 실시간 자동 업데이트 시스템 (Live Auto-Updater)
 
-SnapClean AI는 GitHub Releases API(`https://api.github.com/repos/AhBiYout/AhBiYout-all/releases/latest`)와 실시간으로 통신하여 사용자에게 끊김 없는 최신 패치를 제공합니다:
+SnapClean AI는 GitHub Releases API(`https://api.github.com/repos/AhBiYout-all/SnapClean-AI/releases/latest`)와 실시간으로 통신하여 사용자에게 끊김 없는 최신 패치를 제공합니다:
 
 1. **실시간 버전 비교 엔진 (`updateChecker.ts`)**:
    - Semantic Versioning 규칙에 따라 로컬 설치 버전과 원격 최신 릴리스 태그를 비교합니다.

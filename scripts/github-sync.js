@@ -8,23 +8,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 
-const GITHUB_ACCOUNT = process.env.GITHUB_ACCOUNT || 'AhBiYout';
+const GITHUB_ACCOUNT = process.env.GITHUB_ACCOUNT || 'AhBiYout-all';
 const GITHUB_USERNAME = process.env.GITHUB_USER_NAME || 'AhBiYout-all';
 
 function getDefaultRepoName() {
-  try {
-    const metaPath = path.join(rootDir, 'metadata.json');
-    if (fs.existsSync(metaPath)) {
-      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-      if (meta.name) {
-        return meta.name.trim().replace(/\s+/g, '-');
-      }
-    }
-  } catch {}
-  return 'SnapClean-AI';
+  return process.env.GITHUB_REPO || 'SnapClean-AI';
 }
 
-const GITHUB_REPO = process.env.GITHUB_REPO || getDefaultRepoName();
+const GITHUB_REPO = getDefaultRepoName();
 const REMOTE_URL = `https://github.com/${GITHUB_ACCOUNT}/${GITHUB_REPO}.git`;
 
 function runCmd(cmd, allowFail = false) {

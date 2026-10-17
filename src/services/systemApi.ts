@@ -112,11 +112,20 @@ export const SystemAPI = {
       for (let i = 0; i < fileList.length; i++) {
         const file = fileList[i];
         if (file.name.match(/\.(jpg|jpeg|png|webp|heic|avif|gif|mp4|mov|avi|mkv|webm|pdf|mp3|wav|ogg|m4a|flac|txt|csv|json|md)$/i)) {
-          const relPath = file.webkitRelativePath || (file as any).customRelativePath || file.name;
+          const rawRelPath = file.webkitRelativePath || (file as any).customRelativePath || file.name;
+          const relPath = rawRelPath.replace(/\\/g, '/');
           const fakePath = `/web-local/${relPath}`;
           
-          // Phase 43.4: Store raw File handle instead of eager Blob URL
+          // Phase 43.4: Store raw File handle under all lookup variations for instantaneous matching
           (window as any).__webFileMap.set(fakePath, file);
+          (window as any).__webFileMap.set(relPath, file);
+          (window as any).__webFileMap.set(file.name, file);
+          (window as any).__webFileMap.set(file.name.toLowerCase(), file);
+          (window as any).__webFileMap.set(fakePath.toLowerCase(), file);
+          if (rawRelPath !== relPath) {
+            (window as any).__webFileMap.set(`/web-local/${rawRelPath}`, file);
+            (window as any).__webFileMap.set(rawRelPath, file);
+          }
           
           filesList.push({
             originalId: `web_${Date.now()}_${i}`,
@@ -597,23 +606,55 @@ export const SystemAPI = {
   },
 
   getImageUrl: (path: string, type: 'thumbnail' | 'full' = 'thumbnail', forceRenew: boolean = false): string | null => {
+    if (!path) return null;
     if (isTauri()) {
       return safeConvertFileSrc(path);
     }
     
+    // Normalize slashes
+    const normPath = path.replace(/\\/g, '/');
+
     // Fallback to locally loaded files in browser
-    if ((window as any).__webFileMap && (window as any).__webFileMap.has(path)) {
-      const entry = (window as any).__webFileMap.get(path);
+    if ((window as any).__webFileMap) {
+      let entry = (window as any).__webFileMap.get(path) || (window as any).__webFileMap.get(normPath);
       
-      // Phase 43.5: Use a transient cache for browser-local file URLs
-      // This ensures we dont create thousands of redundant object URLs for the same file.
+      // Secondary lookup: normalized path or filename match
+      if (!entry) {
+        const decoded = decodeURIComponent(normPath);
+        entry = (window as any).__webFileMap.get(decoded);
+        
+        if (!entry) {
+          const stripped = normPath.replace(/^\/web-local\//, '');
+          entry = (window as any).__webFileMap.get(stripped) ||
+                  (window as any).__webFileMap.get(`/web-local/${stripped}`) ||
+                  (window as any).__webFileMap.get(stripped.toLowerCase());
+        }
+
+        if (!entry) {
+          const fileName = normPath.split('/').pop()?.toLowerCase();
+          if (fileName) {
+            entry = (window as any).__webFileMap.get(fileName);
+            if (!entry) {
+              for (const [k, v] of (window as any).__webFileMap.entries()) {
+                const kLower = k.replace(/\\/g, '/').toLowerCase();
+                if (kLower.endsWith('/' + fileName) || kLower === fileName || kLower.endsWith(fileName)) {
+                  entry = v;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Transient cache for browser-local file URLs
       if (entry instanceof File || entry instanceof Blob) {
         if (!(window as any).__transientUrlMap) (window as any).__transientUrlMap = new Map<string, string>();
         const urlMap = (window as any).__transientUrlMap as Map<string, string>;
         
         if (!forceRenew && urlMap.has(path)) return urlMap.get(path)!;
+        if (!forceRenew && urlMap.has(normPath)) return urlMap.get(normPath)!;
         
-        // If forcing a renew, we should revoke the previous one to avoid leaking
         if (forceRenew && urlMap.has(path)) {
           const oldUrl = urlMap.get(path);
           if (oldUrl) blobRegistry.revoke(oldUrl);
@@ -621,24 +662,24 @@ export const SystemAPI = {
 
         const url = blobRegistry.create(entry);
         urlMap.set(path, url);
+        urlMap.set(normPath, url);
         return url;
       }
-      return entry;
+      if (typeof entry === 'string') return entry;
     }
     
-    // Phase 44.3: Prevent server fall-through for /web-local/ paths if possible to avoid placeholder spam
-    // If we are here, we don't have a local file handle. The server definitely won't have it either.
-    if (path.startsWith('/web-local/')) {
-      return null; // Returning null will trigger fallback UI in PhotoCard instead of server placeholder
-    }
-
+    // Always fall back to server endpoint (serves real image or instant SVG preview)
     return type === 'thumbnail'
-      ? `/api/system/thumbnail?path=${encodeURIComponent(path)}`
-      : `/api/system/view?path=${encodeURIComponent(path)}`;
+      ? `/api/system/thumbnail?path=${encodeURIComponent(normPath)}`
+      : `/api/system/view?path=${encodeURIComponent(normPath)}`;
   },
 
   getThumbnailData: async (path: string): Promise<string> => {
-    // Phase 43.6: Enhanced cache validation logic
+    // Phase 44.2: FastView Engine DLL accelerated lookup
+    const { fastViewEngine } = await import('./fastViewEngine');
+    const instant = fastViewEngine.getInstantThumbnail(path);
+    if (instant) return instant;
+
     const cacheMap = (window as any).__thumbCache || new Map<string, string>();
     if (!(window as any).__thumbCache) (window as any).__thumbCache = cacheMap;
     
@@ -659,6 +700,17 @@ export const SystemAPI = {
         return SystemAPI.getImageUrl(path, 'thumbnail'); // fallback
       }
     }
+
+    try {
+      const fastRes = await fastViewEngine.getFastThumbnail({ path });
+      if (fastRes.url) {
+        cacheMap.set(path, fastRes.url);
+        return fastRes.url;
+      }
+    } catch {
+      // fallback
+    }
+
     return SystemAPI.getImageUrl(path, 'thumbnail');
   },
 

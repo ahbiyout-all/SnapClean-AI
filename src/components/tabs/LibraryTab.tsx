@@ -31,21 +31,40 @@ import { db, PhotoRecord } from '../../services/db';
 import { useI18n } from '../../i18n/context';
 import { PhotoCard } from '../PhotoCard';
 import { PhotoMap } from '../PhotoMap';
+import { VirtualGrid } from '../VirtualGrid';
 import { AnimatePresence, motion } from 'motion/react';
 import { getLocalizedCategory } from '../../utils/categoryUtils';
 import { SystemAPI } from '../../services/systemApi';
+import { Tooltip, InfoTooltip } from '../Tooltip';
+import { fastViewEngine } from '../../services/fastViewEngine';
 
-const LibMiniThumbnail = ({ thumbnail }: { thumbnail?: Blob }) => {
-  const [src, setSrc] = useState<string | null>(null);
+const LibMiniThumbnail = ({ thumbnail, photo }: { thumbnail?: Blob; photo?: PhotoRecord }) => {
+  const [src, setSrc] = useState<string | null>(() => photo ? fastViewEngine.getInstantThumbnail(photo.path) : null);
 
   useEffect(() => {
-    if (!thumbnail || thumbnail.size === 0) return;
-    const url = URL.createObjectURL(thumbnail);
-    setSrc(url);
+    let active = true;
+    if (photo) {
+      const instant = fastViewEngine.getInstantThumbnail(photo.path);
+      if (instant) {
+        setSrc(instant);
+        return;
+      }
+      fastViewEngine.getFastThumbnail(photo)
+        .then(res => {
+          if (active && res.url) setSrc(res.url);
+        })
+        .catch(() => {});
+    } else if (thumbnail && thumbnail.size > 0) {
+      const url = URL.createObjectURL(thumbnail);
+      setSrc(url);
+      return () => {
+        if (url) URL.revokeObjectURL(url);
+      };
+    }
     return () => {
-      if (url) URL.revokeObjectURL(url);
+      active = false;
     };
-  }, [thumbnail]);
+  }, [thumbnail, photo?.path]);
 
   if (!src) return <ImageIcon size={14} className="text-slate-500" />;
   return <img src={src} alt="" referrerPolicy="no-referrer" className="w-full h-full object-cover" />;
@@ -185,6 +204,16 @@ export const LibraryTab = ({
   const [showBatchRenameModal, setShowBatchRenameModal] = useState(false);
   const [renamePattern, setRenamePattern] = useState('[Date]-[Location]-[Sequence]');
 
+  // FastView Profile State & Listener for PC vs Mobile Dual-Mode
+  const [fastViewProfile, setFastViewProfile] = useState(() => fastViewEngine.getProfileConfig());
+
+  useEffect(() => {
+    const unsubscribe = fastViewEngine.subscribeProfile((config) => {
+      setFastViewProfile(config);
+    });
+    return unsubscribe;
+  }, []);
+
   useEffect(() => {
     localStorage.setItem('library_view_layout', viewLayout);
   }, [viewLayout]);
@@ -270,6 +299,15 @@ export const LibraryTab = ({
     return () => observer.disconnect();
   }, [sentinelRef, sortedPhotos.length]);
 
+  // Predictive FastView DLL Prefetching Queue tailored to PC / Mobile Dual-Mode
+  useEffect(() => {
+    if (sortedPhotos.length > 0) {
+      const distance = fastViewProfile.prefetchDistance || 48;
+      const sliceToPrefetch = sortedPhotos.slice(0, Math.min(visibleCount + distance, sortedPhotos.length));
+      fastViewEngine.prefetchBatch(sliceToPrefetch);
+    }
+  }, [sortedPhotos, visibleCount, fastViewProfile]);
+
   const groupedPhotosMap = useMemo(() => {
     if (viewGroupBy === 'none') return null;
 
@@ -346,7 +384,7 @@ export const LibraryTab = ({
                   e.preventDefault();
                   SystemAPI.openInDefaultApp(photo, addNotification);
                 }}
-                className={`flex items-center justify-between p-2 rounded-xl border cursor-pointer transition-all ${
+                className={`flex items-center justify-between p-2 rounded-xl border cursor-pointer transition-all cv-row ${
                   isSelected 
                     ? 'bg-indigo-600/30 border-indigo-500/50 text-white' 
                     : 'bg-white/[0.01] border-white/5 text-slate-300 hover:bg-white/5'
@@ -363,7 +401,7 @@ export const LibraryTab = ({
                     ) : isDocText ? (
                       <FileText size={14} className="text-emerald-400" />
                     ) : (
-                      <LibMiniThumbnail thumbnail={photo.thumbnail} />
+                      <LibMiniThumbnail thumbnail={photo.thumbnail} photo={photo} />
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -462,7 +500,7 @@ export const LibraryTab = ({
                       e.preventDefault();
                       SystemAPI.openInDefaultApp(photo, addNotification);
                     }}
-                    className={`cursor-pointer transition-colors group ${
+                    className={`cursor-pointer transition-colors group cv-row ${
                       isSelected 
                         ? 'bg-indigo-600/20 text-white ring-1 ring-inset ring-indigo-500' 
                         : 'hover:bg-white/5 text-slate-300'
@@ -479,7 +517,7 @@ export const LibraryTab = ({
                         ) : isDocText ? (
                           <FileText size={14} className="text-emerald-400" />
                         ) : (
-                          <LibMiniThumbnail thumbnail={photo.thumbnail} />
+                          <LibMiniThumbnail thumbnail={photo.thumbnail} photo={photo} />
                         )}
                       </div>
                     </td>
@@ -553,9 +591,30 @@ export const LibraryTab = ({
       gridClass = 'grid-cols-3 sm:grid-cols-5 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-1.5';
     }
 
+    let estimatedItemHeight = 220;
+    let estimatedCols = 4;
+    if (viewLayout === 'extra-large') {
+      estimatedItemHeight = 360;
+      estimatedCols = 2;
+    } else if (viewLayout === 'large') {
+      estimatedItemHeight = 280;
+      estimatedCols = 4;
+    } else if (viewLayout === 'medium') {
+      estimatedItemHeight = 200;
+      estimatedCols = 6;
+    } else if (viewLayout === 'small') {
+      estimatedItemHeight = 130;
+      estimatedCols = 8;
+    }
+
     return (
-      <div className={`grid ${gridClass}`}>
-        {slicedPhotos.map((photo, idx) => (
+      <VirtualGrid
+        items={slicedPhotos}
+        itemHeight={estimatedItemHeight}
+        columns={estimatedCols}
+        overscan={2}
+        gridClassName={`grid ${gridClass}`}
+        renderItem={(photo, idx) => (
           <PhotoCard 
             key={`${prefix}-${photo.id}-${idx}`}
             photo={photo} 
@@ -576,8 +635,8 @@ export const LibraryTab = ({
               SystemAPI.openInDefaultApp(p, addNotification);
             }}
           />
-        ))}
-      </div>
+        )}
+      />
     );
   };
 
@@ -912,32 +971,75 @@ export const LibraryTab = ({
         ))}
       </div>
 
-      <div className="flex justify-between items-center mb-4 bg-white/5 p-3 rounded-xl border border-white/5">
-        <div className="flex flex-col">
-          <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-            {filteredLibraryPhotos.length} {t('photosFound')}
-          </div>
-          {selectedPhotoIds.length > 0 && (
-            <div className="text-[9px] text-indigo-400 font-bold uppercase mt-1">
-              {selectedPhotoIds.length} {t('assetsSelectedForBatch')}
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-4 bg-white/5 p-3 rounded-xl border border-white/5">
+        <div className="flex items-center gap-3">
+          <div className="flex flex-col">
+            <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+              {filteredLibraryPhotos.length} {t('photosFound')}
             </div>
-          )}
+            {selectedPhotoIds.length > 0 && (
+              <div className="text-[9px] text-indigo-400 font-bold uppercase mt-1">
+                {selectedPhotoIds.length} {t('assetsSelectedForBatch')}
+              </div>
+            )}
+          </div>
+
+          {/* FastView Dual-Mode Status Badge */}
+          <Tooltip
+            title={language === 'ko' ? 'FastView 이원화 엔진 상태' : 'FastView Dual-Engine Status'}
+            content={
+              fastViewProfile.mode === 'pc'
+                ? (language === 'ko' ? 'PC 초고성능 모드: L1 800개 캐시, 8쓰레드, 320px 썸네일, Hover Zoom 동작' : 'PC High Performance: L1 800 cache, 8 threads, 320px WebP, Hover Zoom')
+                : (language === 'ko' ? '모바일 최적화 모드: L1 160개 캐시, 2쓰레드, 220px 썸네일, Touch Swipe & 저전력' : 'Mobile Optimized: L1 160 cache, 2 threads, 220px WebP, Touch Swipe & Low Power')
+            }
+          >
+            <button
+              onClick={() => setShowViewMenu(true)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border cursor-pointer transition-all ${
+                fastViewProfile.mode === 'pc'
+                  ? 'bg-blue-950/80 border-blue-500/40 text-blue-300 hover:bg-blue-900/80'
+                  : 'bg-emerald-950/80 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/80'
+              }`}
+            >
+              <Zap size={10} className={fastViewProfile.mode === 'pc' ? 'text-blue-400' : 'text-emerald-400'} />
+              <span>
+                FastView: {fastViewProfile.mode === 'pc' ? 'PC (High-Perf)' : 'Mobile (Low-Power)'}
+              </span>
+              {fastViewProfile.lowPowerSaverActive && (
+                <span className="bg-amber-500/30 text-amber-300 px-1 rounded text-[8px]">
+                  🔋 PowerSaver
+                </span>
+              )}
+            </button>
+          </Tooltip>
         </div>
+
         <div className="flex gap-2">
-          <button 
-            onClick={() => setShowViewMenu(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border bg-slate-900 border-white/10 text-indigo-400 hover:text-white hover:bg-indigo-500 hover:text-white cursor-pointer shadow-md"
+          <Tooltip
+            title={language === 'ko' ? '탐색기 보기 설정' : 'View Options'}
+            content={language === 'ko' ? '그리드 크기, 정렬 기준, 그룹화 방식(카테고리/연도/확장자)을 설정합니다.' : 'Configure grid thumbnail size, sorting criteria, and grouping modes.'}
           >
-            <SlidersHorizontal size={14} />
-            {language === 'ko' ? '탐색기 보기 설정' : 'View Options'}
-          </button>
-          <button 
-            onClick={() => setShowMap(!showMap)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${showMap ? 'bg-blue-600 border-blue-500 text-white shadow-lg shadow-blue-500/20' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}
+            <button 
+              onClick={() => setShowViewMenu(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border bg-slate-900 border-white/10 text-indigo-400 hover:text-white hover:bg-indigo-500 cursor-pointer shadow-md"
+            >
+              <SlidersHorizontal size={14} />
+              {language === 'ko' ? '탐색기 보기 설정' : 'View Options'}
+            </button>
+          </Tooltip>
+
+          <Tooltip
+            title={language === 'ko' ? '지도 위치 뷰' : 'Photo Map View'}
+            content={language === 'ko' ? 'GPS EXIF 좌표가 포함된 사진들의 전 세계 촬영 위치를 인터랙티브 지도로 확인합니다.' : 'Interactive world map visualizing photo GPS coordinates.'}
           >
-            <MapPin size={14} className={showMap ? 'animate-bounce' : ''} />
-            {showMap ? t('hideMap') : t('showMap')}
-          </button>
+            <button 
+              onClick={() => setShowMap(!showMap)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border cursor-pointer ${showMap ? 'bg-blue-600 border-blue-500 text-white shadow-lg shadow-blue-500/20' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}
+            >
+              <MapPin size={14} className={showMap ? 'animate-bounce' : ''} />
+              {showMap ? t('hideMap') : t('showMap')}
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -961,46 +1063,64 @@ export const LibraryTab = ({
 
       {filteredLibraryPhotos.length > 0 && (
         <div className="grid grid-cols-2 sm:flex sm:flex-row flex-wrap gap-2 w-full">
-          <button 
-            onClick={() => setModal({
-              type: 'organize',
-              title: 'Organize Files by Filter',
-              message: 'This will physically move the files into categorized subfolders. Choose how you want to structure them:',
-              options: ['Category', 'Year', 'Camera', 'Format'],
-              onConfirm: (option: string, mode: 'copy' | 'move') => {
-                if (option) handleOrganize(filteredLibraryPhotos, option, mode);
-              }
-            })} 
-            className="px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 border border-indigo-500/50 shadow-lg shadow-indigo-500/20"
+          <Tooltip
+            title={language === 'ko' ? '필터 기준 파일 물리적 정리' : 'Organize Files'}
+            content={language === 'ko' ? '현재 필터링된 사진들을 카테고리, 연도, 카메라별 하위 폴더로 자동 이동/복사합니다.' : 'Physically organize files into structured subfolders by category, date, or camera.'}
           >
-            <Layers size={14} />
-            <span className="truncate">{t('organizeFiles')}</span>
-          </button>
-          <button 
-            onClick={() => {
-              if (isMultiSelectMode) setSelectedPhotoIds([]);
-              setIsMultiSelectMode(!isMultiSelectMode);
-            }}
-            className={`px-3 sm:px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 border ${isMultiSelectMode ? 'bg-amber-600 border-amber-500 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}
+            <button 
+              onClick={() => setModal({
+                type: 'organize',
+                title: language === 'ko' ? '필터 및 카테고리별 파일 정리' : 'Organize Files by Filter',
+                message: language === 'ko'
+                  ? '선택한 사진들을 분류 기준에 맞는 하위 폴더로 자동 구성하여 정리합니다. 원하시는 폴더 구조를 선택하세요:'
+                  : 'This will physically move or copy the files into categorized subfolders. Choose how you want to structure them:',
+                options: ['Category', 'Year', 'Camera', 'Format'],
+                onConfirm: (option: string, mode: 'copy' | 'move') => {
+                  if (option) handleOrganize(filteredLibraryPhotos, option, mode);
+                }
+              })} 
+              className="px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 border border-indigo-500/50 shadow-lg shadow-indigo-500/20 cursor-pointer"
+            >
+              <Layers size={14} />
+              <span className="truncate">{t('organizeFiles')}</span>
+            </button>
+          </Tooltip>
+
+          <Tooltip
+            title={language === 'ko' ? '다중 선택 모드' : 'Multi-Select Mode'}
+            content={language === 'ko' ? '여러 사진을 한 번에 선택하여 일괄 이름 변경 또는 삭제를 실행합니다.' : 'Toggle multi-selection to batch rename or manage selected photos.'}
           >
-            {isMultiSelectMode ? <CheckCircle2 size={14} /> : <Zap size={14} />}
-            <span>{isMultiSelectMode ? t('cancel') : t('select')}</span>
-          </button>
+            <button 
+              onClick={() => {
+                if (isMultiSelectMode) setSelectedPhotoIds([]);
+                setIsMultiSelectMode(!isMultiSelectMode);
+              }}
+              className={`px-3 sm:px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 border cursor-pointer ${isMultiSelectMode ? 'bg-amber-600 border-amber-500 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}
+            >
+              {isMultiSelectMode ? <CheckCircle2 size={14} /> : <Zap size={14} />}
+              <span>{isMultiSelectMode ? t('cancel') : t('select')}</span>
+            </button>
+          </Tooltip>
 
           {isMultiSelectMode && selectedPhotoIds.length > 0 && handleBatchRename && (
-            <button 
-              onClick={() => setShowBatchRenameModal(true)}
-              className="px-3 sm:px-4 py-2 bg-pink-600 hover:bg-pink-500 rounded-lg text-white text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 border border-pink-500/50 shadow-lg shadow-pink-500/20"
+            <Tooltip
+              title={language === 'ko' ? '일괄 이름 변경' : 'Batch Rename'}
+              content={language === 'ko' ? '선택한 모든 사진의 파일명을 날짜, 장소, 일련번호 규칙에 맞춰 일괄 변경합니다.' : 'Batch rename selected files with patterned placeholders.'}
             >
-              <Edit2 size={14} />
-              <span className="truncate">Batch Rename ({selectedPhotoIds.length})</span>
-            </button>
+              <button 
+                onClick={() => setShowBatchRenameModal(true)}
+                className="px-3 sm:px-4 py-2 bg-pink-600 hover:bg-pink-500 rounded-lg text-white text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 border border-pink-500/50 shadow-lg shadow-pink-500/20 cursor-pointer"
+              >
+                <Edit2 size={14} />
+                <span className="truncate">Batch Rename ({selectedPhotoIds.length})</span>
+              </button>
+            </Tooltip>
           )}
 
           {isMultiSelectMode && selectedPhotoIds.length > 0 && (
             <button 
               onClick={() => setSelectedPhotoIds([])}
-              className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-slate-400 text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center"
+              className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-slate-400 text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center cursor-pointer"
             >
               {t('clear')} ({selectedPhotoIds.length})
             </button>
@@ -1164,6 +1284,42 @@ export const LibraryTab = ({
                       {language === 'ko' ? '내림차순' : 'Descending'}
                     </button>
                   </div>
+                </div>
+              </div>
+
+              {/* FastView Dual-Mode Engine Configuration */}
+              <div className="space-y-2 border-t border-white/5 pt-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <Zap size={12} className="text-amber-400" />
+                    {language === 'ko' ? 'FastView 초고속 표시 엔진 모드' : 'FastView Engine Profile'}
+                  </span>
+                  <span className="text-[9px] font-mono text-slate-400">
+                    L1: {fastViewProfile.maxCacheSize}개 / {fastViewProfile.concurrencyLimit}쓰레드
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[
+                    { key: 'pc', label_ko: '⚡ PC (고성능)', label_en: '⚡ PC High-Perf', desc_ko: '8쓰레드 / L1 800개 / Hover Zoom', desc_en: '8 threads / 800 L1 / Hover Zoom' },
+                    { key: 'mobile', label_ko: '📱 모바일 (저전력)', label_en: '📱 Mobile Low-Power', desc_ko: '2쓰레드 / L1 160개 / Swipe & Haptics', desc_en: '2 threads / 160 L1 / Swipe' },
+                    { key: 'auto', label_ko: '🔄 자동 감지', label_en: '🔄 Auto Detect', desc_ko: '기기 특성 자동 식별', desc_en: 'Auto identify device' },
+                  ].map(p => {
+                    const isSelected = fastViewProfile.userPreference === p.key;
+                    return (
+                      <button
+                        key={p.key}
+                        onClick={() => fastViewEngine.setMode(p.key as any)}
+                        className={`p-2 rounded-xl border text-[9px] font-bold text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-1 ${
+                          isSelected
+                            ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-md ring-1 ring-amber-500/30'
+                            : 'bg-white/5 border-white/5 text-slate-400 hover:text-white hover:bg-white/10'
+                        }`}
+                        title={language === 'ko' ? p.desc_ko : p.desc_en}
+                      >
+                        <span>{language === 'ko' ? p.label_ko : p.label_en}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

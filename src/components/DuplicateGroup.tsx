@@ -23,23 +23,27 @@ import {
   Camera,
   Star,
   Table as TableIcon,
+  Maximize2,
 } from "lucide-react";
 import { PhotoRecord, db } from "../services/db";
 import { DedupeEngine, DedupeGroup } from "../services/dedupeEngine";
 import { useI18n } from "../i18n/context";
 import { PhotoCard } from "./PhotoCard";
 import { SystemAPI } from "../services/systemApi";
-import { libraryManager } from "../services/PhotoLibraryManager";
+import { libraryManager, DedupeRule } from "../services/PhotoLibraryManager";
 import { MotionCreatorModal } from "./MotionCreatorModal";
 import { blobRegistry } from "../utils/blobRegistry";
 import { DuplicateExplorerTable } from "./DuplicateExplorerTable";
+import { PhotoInspectionModal } from "./PhotoInspectionModal";
+import { fastViewEngine } from "../services/fastViewEngine";
+import { Tooltip, InfoTooltip } from "./Tooltip";
 
 export type DuplicateViewMode = "details" | "list" | "grid";
 
 interface DuplicateGroupProps {
   key?: string;
   group: DedupeGroup;
-  rule?: "sharpest" | "largest" | "newest" | "oldest";
+  rule?: DedupeRule;
   onResolve: (g: DedupeGroup, deleteIds?: number[]) => void;
   selectedPhotoId?: number | null;
   onSelect?: (id: number | null) => void;
@@ -89,9 +93,95 @@ function getFileExtension(filePath?: string): string {
   return dot !== -1 ? name.substring(dot + 1).toUpperCase() : "";
 }
 
+const GroupHeaderMiniThumb: React.FC<{
+  photo: PhotoRecord;
+  title: string;
+  isBest: boolean;
+  onClick: (e: React.MouseEvent) => void;
+}> = ({ photo, title, isBest, onClick }) => {
+  const [imgSrc, setImgSrc] = useState<string | null>(() => {
+    return fastViewEngine.getInstantThumbnail(photo.path) || null;
+  });
+  const [hasError, setHasError] = useState(false);
+
+  const isPdf =
+    photo.type === "application/pdf" ||
+    photo.path?.toLowerCase().endsWith(".pdf");
+  const isVideo =
+    photo.type?.startsWith("video/") ||
+    photo.path?.toLowerCase().match(/\.(mp4|mov|avi|mkv|webm)$/);
+
+  useEffect(() => {
+    if (isPdf || isVideo) return;
+    let active = true;
+
+    if (photo.thumbnail && photo.thumbnail.size > 0) {
+      const url = blobRegistry.create(photo.thumbnail);
+      setImgSrc(url);
+      return () => {
+        blobRegistry.revoke(url);
+      };
+    }
+
+    const instant = fastViewEngine.getInstantThumbnail(photo.path);
+    if (instant) {
+      setImgSrc(instant);
+      return;
+    }
+
+    fastViewEngine.getFastThumbnail(photo)
+      .then((res) => {
+        if (active && res.url) setImgSrc(res.url);
+      })
+      .catch(() => {
+        if (active) {
+          const sys = SystemAPI.getImageUrl(photo.path, "thumbnail");
+          setImgSrc(sys);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [photo.path, photo.thumbnail, photo.blob, isPdf, isVideo]);
+
+  return (
+    <div
+      onClick={onClick}
+      title={title}
+      className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-slate-800 border-2 border-slate-900 overflow-hidden shadow-2xl relative transition-transform hover:z-50 hover:scale-110 flex items-center justify-center shrink-0 cursor-pointer"
+      style={{ backgroundColor: fastViewEngine.getInstantDominantColor(photo.path) }}
+    >
+      {imgSrc && !hasError ? (
+        <img
+          src={imgSrc}
+          className="w-full h-full object-cover"
+          referrerPolicy="no-referrer"
+          alt=""
+          onError={() => setHasError(true)}
+        />
+      ) : isPdf ? (
+        <FileText size={14} className="text-red-400" />
+      ) : isVideo ? (
+        <Video size={14} className="text-sky-400" />
+      ) : (
+        <ImageIcon size={14} className="text-slate-500/60" />
+      )}
+
+      {isBest && (
+        <div
+          className="absolute top-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-slate-900 z-20"
+          title="AI Best Shot"
+        />
+      )}
+    </div>
+  );
+};
+
 export const EventImage = ({ photoId }: { photoId?: number }) => {
   const [photo, setPhoto] = useState<PhotoRecord | null>(null);
   const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -107,25 +197,48 @@ export const EventImage = ({ photoId }: { photoId?: number }) => {
 
   useEffect(() => {
     if (!photo) return;
+    setHasError(false);
+    let active = true;
 
-    let objectUrl = "";
-    if (photo.thumbnail) {
-      objectUrl = blobRegistry.create(photo.thumbnail);
+    if (photo.thumbnail && photo.thumbnail.size > 0) {
+      const objectUrl = blobRegistry.create(photo.thumbnail);
       setImgSrc(objectUrl);
-    } else {
-      setImgSrc(photo.path || null);
+      return () => {
+        blobRegistry.revoke(objectUrl);
+      };
     }
 
+    const instant = fastViewEngine.getInstantThumbnail(photo.path);
+    if (instant) {
+      setImgSrc(instant);
+      return;
+    }
+
+    fastViewEngine.getFastThumbnail(photo)
+      .then((res) => {
+        if (active && res.url) {
+          setImgSrc(res.url);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          const sysUrl = SystemAPI.getImageUrl(photo.path, "thumbnail");
+          setImgSrc(sysUrl);
+        }
+      });
+
     return () => {
-      if (objectUrl) {
-        blobRegistry.revoke(objectUrl);
-      }
+      active = false;
     };
   }, [photo]);
 
   const isPdf = photo
     ? photo.type === "application/pdf" ||
       photo.path?.toLowerCase().endsWith(".pdf")
+    : false;
+  const isVideo = photo
+    ? photo.type?.startsWith("video/") ||
+      photo.path?.toLowerCase().match(/\.(mp4|mov|avi|mkv|webm)$/)
     : false;
 
   if (!photo)
@@ -139,14 +252,27 @@ export const EventImage = ({ photoId }: { photoId?: number }) => {
     );
   }
 
+  if (isVideo) {
+    return (
+      <div className="w-full h-full bg-slate-950 flex items-center justify-center">
+        <Video size={24} className="text-sky-400" />
+      </div>
+    );
+  }
+
   return (
-    imgSrc && (
+    imgSrc && !hasError ? (
       <img
         src={imgSrc}
         alt=""
         className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
         referrerPolicy="no-referrer"
+        onError={() => setHasError(true)}
       />
+    ) : (
+      <div className="w-full h-full bg-slate-950 flex items-center justify-center">
+        <ImageIcon size={24} className="text-slate-700" />
+      </div>
     )
   );
 };
@@ -167,6 +293,7 @@ interface DuplicateListRowProps {
   folderIndex: number;
   bestSize: number;
   isAllSameSize: boolean;
+  onInspect?: () => void;
 }
 
 const DuplicateListRow: React.FC<DuplicateListRowProps> = ({
@@ -181,18 +308,63 @@ const DuplicateListRow: React.FC<DuplicateListRowProps> = ({
   folderIndex,
   bestSize,
   isAllSameSize,
+  onInspect,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [imgLoadError, setImgLoadError] = useState(false);
   const isPdf =
     photo.type === "application/pdf" ||
     photo.path?.toLowerCase().endsWith(".pdf");
-  const isVideo = photo.type?.startsWith("video/");
+  const isVideo =
+    photo.type?.startsWith("video/") ||
+    photo.path?.toLowerCase().match(/\.(mp4|mov|avi|mkv|webm)$/);
   const ext = getFileExtension(photo.path);
   const fileName = getFileName(photo.path);
   const folderPath = getFolderPath(photo.path);
 
+  const [asyncThumb, setAsyncThumb] = useState<string | null>(() => {
+    return fastViewEngine.getInstantThumbnail(photo.path) || null;
+  });
+
+  useEffect(() => {
+    if (isPdf || isVideo) return;
+    let active = true;
+
+    if (photo.thumbnail && photo.thumbnail.size > 0) {
+      const url = blobRegistry.create(photo.thumbnail);
+      setAsyncThumb(url);
+      return () => {
+        blobRegistry.revoke(url);
+      };
+    }
+
+    const instant = fastViewEngine.getInstantThumbnail(photo.path);
+    if (instant) {
+      setAsyncThumb(instant);
+      return;
+    }
+
+    fastViewEngine.getFastThumbnail(photo)
+      .then((res) => {
+        if (active && res.url) setAsyncThumb(res.url);
+      })
+      .catch(() => {
+        if (active) {
+          const sys = SystemAPI.getImageUrl(photo.path, "thumbnail");
+          setAsyncThumb(sys);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [photo.path, photo.thumbnail, photo.blob, isPdf, isVideo]);
+
   const thumbUrl = useMemo(() => {
-    if (isPdf) return null;
+    if (isPdf || isVideo) return null;
+    if (asyncThumb) return asyncThumb;
+    const instant = fastViewEngine.getInstantThumbnail(photo.path);
+    if (instant) return instant;
     if (photo.thumbnail && photo.thumbnail.size > 0) {
       return libraryManager.getBlobUrl(photo.path, () =>
         URL.createObjectURL(photo.thumbnail!),
@@ -204,7 +376,7 @@ const DuplicateListRow: React.FC<DuplicateListRowProps> = ({
       );
     }
     return SystemAPI.getImageUrl(photo.path, "thumbnail");
-  }, [photo, isPdf]);
+  }, [photo, isPdf, isVideo, asyncThumb]);
 
   const handleCopyPath = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -238,7 +410,10 @@ const DuplicateListRow: React.FC<DuplicateListRowProps> = ({
 
   return (
     <div
-      onDoubleClick={handleOpenWithApp}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        onInspect();
+      }}
       className={`group/row relative flex flex-col xl:flex-row xl:items-center justify-between p-4 sm:p-5 rounded-2xl border transition-all duration-200 gap-4 ${
         isKept
           ? "bg-emerald-950/20 border-emerald-500/40 hover:bg-emerald-950/30 ring-1 ring-emerald-500/30"
@@ -266,20 +441,24 @@ const DuplicateListRow: React.FC<DuplicateListRowProps> = ({
 
         {/* Thumbnail with overlay preview */}
         <div
-          onClick={handleOpenWithApp}
+          onClick={(e) => {
+            e.stopPropagation();
+            onInspect();
+          }}
           className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-slate-900 border border-white/10 overflow-hidden shrink-0 flex items-center justify-center cursor-pointer shadow-lg group-hover/row:border-white/30"
           title={
             language === "ko"
-              ? "더블클릭 또는 클릭하여 Windows 연결 프로그램으로 열기"
-              : "Double-click to open in default Windows app"
+              ? "클릭하여 사진 정밀 미리보기 / 비교"
+              : "Click to preview / inspect photo in full viewer"
           }
         >
-          {thumbUrl ? (
+          {thumbUrl && !imgLoadError ? (
             <img
               src={thumbUrl}
               alt=""
               referrerPolicy="no-referrer"
               className="w-full h-full object-cover transition-transform group-hover/row:scale-105"
+              onError={() => setImgLoadError(true)}
             />
           ) : isPdf ? (
             <FileText size={24} className="text-red-400" />
@@ -313,7 +492,7 @@ const DuplicateListRow: React.FC<DuplicateListRowProps> = ({
 
           {/* Hover zoom overlay indicator */}
           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/row:opacity-100 transition-opacity flex items-center justify-center text-white">
-            <ExternalLink size={16} />
+            <Maximize2 size={16} />
           </div>
         </div>
 
@@ -321,7 +500,10 @@ const DuplicateListRow: React.FC<DuplicateListRowProps> = ({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span
-              onClick={handleOpenWithApp}
+              onClick={(e) => {
+                e.stopPropagation();
+                onInspect();
+              }}
               className="font-bold text-sm sm:text-base text-white hover:text-indigo-300 transition-colors cursor-pointer truncate max-w-xs sm:max-w-md"
               title={fileName}
             >
@@ -465,63 +647,105 @@ const DuplicateListRow: React.FC<DuplicateListRowProps> = ({
 
       {/* Right: Action Buttons */}
       <div className="flex items-center gap-2 justify-end shrink-0 border-t xl:border-t-0 border-white/5 pt-2 xl:pt-0">
-        <button
-          type="button"
-          onClick={handleOpenWithApp}
-          className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border border-white/5"
-          title={
+        {onInspect && (
+          <Tooltip
+            title={language === "ko" ? "정밀 사진 분석" : "Inspect Photo"}
+            content={
+              language === "ko"
+                ? "전체화면에서 줌인/비교/EXIF 정보를 분석합니다."
+                : "Open forensic photo inspector for zoom and EXIF details."
+            }
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onInspect();
+              }}
+              className="px-3 py-2 bg-indigo-600/20 hover:bg-indigo-600/35 text-indigo-300 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border border-indigo-500/30"
+            >
+              <Maximize2 size={13} />
+              <span className="hidden sm:inline">
+                {language === "ko" ? "정밀 보기" : "Inspect"}
+              </span>
+            </button>
+          </Tooltip>
+        )}
+
+        <Tooltip
+          title={language === "ko" ? "기본 뷰어로 열기" : "Open in Default App"}
+          content={
             language === "ko"
-              ? "Windows 연결 프로그램으로 열기 (더블클릭 가능)"
-              : "Open in Windows default application"
+              ? "Windows 사진 뷰어 또는 기본 연결 프로그램으로 원본을 엽니다."
+              : "Launch in default Windows Photo Viewer or media app."
           }
         >
-          <ExternalLink size={13} />
-          <span className="hidden sm:inline">
-            {language === "ko" ? "열기" : "Open"}
-          </span>
-        </button>
+          <button
+            type="button"
+            onClick={handleOpenWithApp}
+            className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border border-white/5"
+          >
+            <ExternalLink size={13} />
+            <span className="hidden sm:inline">
+              {language === "ko" ? "열기" : "Open"}
+            </span>
+          </button>
+        </Tooltip>
 
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onKeepOnlyThis();
-          }}
-          className="px-3 py-2 bg-indigo-600/15 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-          title={
+        <Tooltip
+          title={language === "ko" ? "이 파일만 보존" : "Keep Only This"}
+          content={
             language === "ko"
-              ? "이 파일만 보존하고 그룹의 다른 파일은 모두 삭제 대상으로 변경"
-              : "Keep only this item and mark others for deletion"
+              ? "이 사진만 디스크에 보존하고, 그룹의 다른 모든 사진을 정리(삭제) 대상으로 지정합니다."
+              : "Keep this single asset and mark all other duplicate copies for deletion."
           }
         >
-          <CheckCircle2 size={13} />
-          <span>{language === "ko" ? "이 파일만 유지" : "Keep Only"}</span>
-        </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onKeepOnlyThis();
+            }}
+            className="px-3 py-2 bg-indigo-600/15 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+          >
+            <CheckCircle2 size={13} />
+            <span>{language === "ko" ? "이 파일만 유지" : "Keep Only"}</span>
+          </button>
+        </Tooltip>
 
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleKeep();
-          }}
-          className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+        <Tooltip
+          title={isKept ? (language === "ko" ? "보존 상태" : "Marked to Keep") : (language === "ko" ? "삭제 상태" : "Marked to Purge")}
+          content={
             isKept
-              ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30"
-              : "bg-rose-600/20 hover:bg-rose-600 border border-rose-500/30 text-rose-300 hover:text-white"
-          }`}
+              ? (language === "ko" ? "클릭 시 삭제 대상(DELETE)으로 전환합니다." : "Click to mark this file for deletion.")
+              : (language === "ko" ? "클릭 시 보존 대상(KEEP)으로 전환합니다." : "Click to keep this file on disk.")
+          }
         >
-          {isKept ? (
-            <>
-              <Check size={14} className="stroke-[3]" />
-              <span>{language === "ko" ? "보존 중" : "KEEP"}</span>
-            </>
-          ) : (
-            <>
-              <Trash2 size={14} />
-              <span>{language === "ko" ? "삭제 대상" : "DELETE"}</span>
-            </>
-          )}
-        </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleKeep();
+            }}
+            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+              isKept
+                ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30"
+                : "bg-rose-600/20 hover:bg-rose-600 border border-rose-500/30 text-rose-300 hover:text-white"
+            }`}
+          >
+            {isKept ? (
+              <>
+                <Check size={14} className="stroke-[3]" />
+                <span>{language === "ko" ? "보존 중" : "KEEP"}</span>
+              </>
+            ) : (
+              <>
+                <Trash2 size={14} />
+                <span>{language === "ko" ? "삭제 대상" : "DELETE"}</span>
+              </>
+            )}
+          </button>
+        </Tooltip>
       </div>
     </div>
   );
@@ -538,6 +762,7 @@ export const DuplicateGroup = ({
 }: DuplicateGroupProps) => {
   const { t, language } = useI18n();
   const [openMotionCreator, setOpenMotionCreator] = useState(false);
+  const [inspectingPhotoIndex, setInspectingPhotoIndex] = useState<number | null>(null);
   const uniqueGroupId = React.useId();
   const [isExpanded, setIsExpanded] = useState(true);
   const [localViewMode, setLocalViewMode] = useState<DuplicateViewMode>(viewMode);
@@ -626,34 +851,48 @@ export const DuplicateGroup = ({
 
   const groupInfo = useMemo(() => {
     const reasons = group.reasons || [];
-    if (reasons.includes("exact"))
+    if (reasons.includes("exact") || group.subType === "exact_byte")
       return {
         label: t("exactMatch"),
         icon: <ShieldCheck size={24} />,
-        color: "bg-emerald-500/10 text-emerald-400",
-        sub: t("verifiedHash"),
+        color: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
+        sub: language === "ko" ? "100% 바이트/해시 일치 원본 및 복사본" : t("verifiedHash"),
       };
-    if (reasons.includes("video"))
+    if (group.subType === "resized" || reasons.includes("resized_variant"))
+      return {
+        label: language === "ko" ? "리사이즈 / 포맷 변환 복사본" : "Resized / Converted Copy",
+        icon: <ImageIcon size={24} />,
+        color: "bg-purple-500/10 text-purple-400 border border-purple-500/20",
+        sub: language === "ko" ? "동일한 장면이지만 해상도나 파일 포맷이 다름" : "Identical scene with different resolution/format",
+      };
+    if (group.subType === "filename_copy" || reasons.includes("filename_copy_pattern"))
+      return {
+        label: language === "ko" ? "파일명 복사 패턴 (1)" : "Filename Copy Pattern",
+        icon: <Copy size={24} />,
+        color: "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20",
+        sub: language === "ko" ? "복사본 명명 규칙 검출 (예: - 복사본, (1))" : "Detected copy naming pattern",
+      };
+    if (reasons.includes("video") || group.photos.some((p) => p.type?.startsWith("video/")))
       return {
         label: t("videoDuplicate"),
         icon: <Video size={24} />,
-        color: "bg-sky-500/10 text-sky-400",
+        color: "bg-sky-500/10 text-sky-400 border border-sky-500/20",
         sub: t("videoAnalysis"),
       };
-    if (reasons.includes("burst"))
+    if (reasons.includes("burst") || group.subType === "burst")
       return {
-        label: t("burstShot"),
+        label: language === "ko" ? "연사 및 연속 촬영 샷" : t("burstShot"),
         icon: <Zap size={24} />,
-        color: "bg-amber-500/10 text-amber-400",
-        sub: t("burstClustering"),
+        color: "bg-amber-500/10 text-amber-400 border border-amber-500/20",
+        sub: language === "ko" ? "연속 셔터로 촬영된 동일 구도 연사 시퀀스" : t("burstClustering"),
       };
     return {
-      label: t("similarMatch"),
+      label: language === "ko" ? `시각적 유사 사진 (${group.similarityPercent || 88}%)` : t("similarMatch"),
       icon: <Layers size={24} />,
-      color: "bg-amber-500/10 text-amber-400",
+      color: "bg-amber-500/10 text-amber-400 border border-amber-500/20",
       sub: t("detectedPhash"),
     };
-  }, [group, t]);
+  }, [group, t, language]);
 
   return (
     <motion.div
@@ -661,7 +900,7 @@ export const DuplicateGroup = ({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className={`glass rounded-[2rem] border-white/5 group relative overflow-hidden transition-all duration-300 ${
+      className={`glass rounded-[2rem] border-white/5 group relative overflow-hidden transition-all duration-300 cv-group gpu-accelerated ${
         isExpanded
           ? "p-4 sm:p-7 ring-2 ring-blue-500/30 bg-blue-500/5"
           : "p-4 sm:p-6 hover:bg-white/5 cursor-pointer shadow-xl"
@@ -697,8 +936,18 @@ export const DuplicateGroup = ({
                 </span>
               )}
               <span className="bg-indigo-500/20 text-indigo-300 text-[9px] font-black px-2 py-0.5 rounded-full border border-indigo-500/30 uppercase italic shrink-0">
-                {group.confidence}% {t("confidence")}
+                {group.confidence !== undefined ? (group.confidence <= 1 ? Math.round(group.confidence * 100) : group.confidence) : 90}% {t("confidence")}
               </span>
+              {groupComparison.isMultiFolder && (
+                <span className="bg-amber-500/15 text-amber-300 text-[9px] font-black px-2 py-0.5 rounded-full border border-amber-500/30 uppercase italic shrink-0">
+                  📁 {language === "ko" ? "폴더 간 중복" : "Cross-Folder"}
+                </span>
+              )}
+              {group.matchDetails?.resolutionDifferent && (
+                <span className="bg-purple-500/15 text-purple-300 text-[9px] font-black px-2 py-0.5 rounded-full border border-purple-500/30 uppercase italic shrink-0">
+                  📐 {language === "ko" ? "해상도 차이" : "Diff Res"}
+                </span>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-slate-400">
@@ -722,52 +971,18 @@ export const DuplicateGroup = ({
         <div className="flex items-center justify-between lg:justify-end gap-3 w-full lg:w-auto border-t border-white/5 lg:border-t-0 pt-3 lg:pt-0">
           {!isExpanded && (
             <div className="flex -space-x-3 group-hover:-space-x-1.5 transition-all mr-4 self-center scale-90 sm:scale-100 origin-left">
-              {group.photos.slice(0, 4).map((p, pIdx) => {
-                const isPdf =
-                  p.type === "application/pdf" ||
-                  p.path?.toLowerCase().endsWith(".pdf");
-                const thumbUrl =
-                  !isPdf && p.thumbnail && p.thumbnail.size > 0
-                    ? libraryManager.getBlobUrl(p.path, () =>
-                        URL.createObjectURL(p.thumbnail!),
-                      )
-                    : !isPdf && p.blob && p.blob.size > 0
-                    ? libraryManager.getBlobUrl(p.path, () =>
-                        URL.createObjectURL(p.blob!),
-                      )
-                    : !isPdf
-                      ? SystemAPI.getImageUrl(p.path, "thumbnail")
-                      : null;
-
-                return (
-                  <div
-                    key={`preview-${uniqueGroupId}-${p.id || p.originalId || "none"}-${pIdx}`}
-                    className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-slate-800 border-2 border-slate-900 overflow-hidden shadow-2xl relative transition-transform hover:z-50 hover:scale-110 flex items-center justify-center shrink-0"
-                  >
-                    {thumbUrl ? (
-                      <img
-                        src={thumbUrl}
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                        alt=""
-                      />
-                    ) : isPdf ? (
-                      <FileText size={14} className="text-red-400" />
-                    ) : p.type?.startsWith("video/") ? (
-                      <Video size={14} className="text-slate-700" />
-                    ) : (
-                      <ImageIcon size={14} className="text-slate-700" />
-                    )}
-
-                    {p.id === bestPhoto.id && (
-                      <div
-                        className="absolute top-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-slate-900 z-20"
-                        title="AI Best Shot"
-                      />
-                    )}
-                  </div>
-                );
-              })}
+              {group.photos.slice(0, 4).map((p, pIdx) => (
+                <GroupHeaderMiniThumb
+                  key={`preview-${uniqueGroupId}-${p.id || p.originalId || "none"}-${pIdx}`}
+                  photo={p}
+                  isBest={p.id === bestPhoto.id}
+                  title={language === "ko" ? `${getFileName(p.path)} 클릭하여 정밀 미리보기` : `Click to preview ${getFileName(p.path)}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setInspectingPhotoIndex(pIdx);
+                  }}
+                />
+              ))}
             </div>
           )}
 
@@ -775,120 +990,170 @@ export const DuplicateGroup = ({
             <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-between lg:justify-end">
               {/* Group View Switcher (Details vs List vs Grid) */}
               <div className="flex bg-black/40 p-0.5 rounded-xl border border-white/10 shrink-0">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setLocalViewMode("details");
-                  }}
-                  className={`p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                    localViewMode === "details"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                  title={
+                <Tooltip
+                  title={language === "ko" ? "자세히 보기" : "Details View"}
+                  content={
                     language === "ko"
-                      ? "자세히 보기 (탐색기형 테이블)"
-                      : "Details View (Explorer Table)"
+                      ? "파일 크기, 해상도, 촬영일, 폴더 경로 등을 테이블로 정밀 비교합니다."
+                      : "Forensic table showing file size, dimensions, EXIF date, and folder path."
                   }
                 >
-                  <TableIcon size={14} />
-                  <span className="text-[10px] hidden sm:inline">
-                    {language === "ko" ? "자세히" : "Details"}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLocalViewMode("details");
+                    }}
+                    className={`p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      localViewMode === "details"
+                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    <TableIcon size={14} />
+                    <span className="text-[10px] hidden sm:inline">
+                      {language === "ko" ? "자세히" : "Details"}
+                    </span>
+                  </button>
+                </Tooltip>
 
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setLocalViewMode("list");
-                  }}
-                  className={`p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                    localViewMode === "list"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                  title={
+                <Tooltip
+                  title={language === "ko" ? "리스트 뷰" : "List View"}
+                  content={
                     language === "ko"
-                      ? "리스트 뷰 (카드형 비교 목록)"
-                      : "List View (Comparison Cards)"
+                      ? "확대된 썸네일과 개별 보존/삭제 버튼이 포함된 카드 리스트입니다."
+                      : "Horizontal cards with larger preview and quick action buttons."
                   }
                 >
-                  <List size={14} />
-                  <span className="text-[10px] hidden sm:inline">
-                    {language === "ko" ? "리스트" : "List"}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLocalViewMode("list");
+                    }}
+                    className={`p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      localViewMode === "list"
+                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    <List size={14} />
+                    <span className="text-[10px] hidden sm:inline">
+                      {language === "ko" ? "리스트" : "List"}
+                    </span>
+                  </button>
+                </Tooltip>
 
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setLocalViewMode("grid");
-                  }}
-                  className={`p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                    localViewMode === "grid"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                  title={
+                <Tooltip
+                  title={language === "ko" ? "그리드 뷰" : "Grid View"}
+                  content={
                     language === "ko"
-                      ? "그리드 뷰 (카드형 레이아웃)"
-                      : "Grid View (Photo Cards)"
+                      ? "사진 썸네일을 격자 형태로 묶어 시각적 비교에 집중합니다."
+                      : "Compact photo grid focused on visual comparison."
                   }
                 >
-                  <LayoutGrid size={14} />
-                  <span className="text-[10px] hidden sm:inline">
-                    {language === "ko" ? "그리드" : "Grid"}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLocalViewMode("grid");
+                    }}
+                    className={`p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      localViewMode === "grid"
+                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    <LayoutGrid size={14} />
+                    <span className="text-[10px] hidden sm:inline">
+                      {language === "ko" ? "그리드" : "Grid"}
+                    </span>
+                  </button>
+                </Tooltip>
               </div>
 
               {group.photos.length >= 2 && (
+                <Tooltip
+                  title={language === "ko" ? "정밀 비교 뷰어" : "Forensic Compare Viewer"}
+                  content={
+                    language === "ko"
+                      ? "전체화면에서 줌인, 좌우 분할 대조, 커튼 슬라이더 오버레이로 픽셀을 정밀 분석합니다."
+                      : "Open fullscreen forensic viewer for zoom, side-by-side, and curtain slider comparison."
+                  }
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setInspectingPhotoIndex(0);
+                    }}
+                    className="px-3 py-2 bg-indigo-600/20 hover:bg-indigo-600/35 border border-indigo-500/30 text-indigo-300 hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                  >
+                    <Maximize2 size={13} className="text-indigo-400" />
+                    <span>
+                      {language === "ko" ? "정밀 비교 뷰어" : "Compare Viewer"}
+                    </span>
+                  </button>
+                </Tooltip>
+              )}
+
+              {group.photos.length >= 2 && (
+                <Tooltip
+                  title={language === "ko" ? "모션 영상 생성" : "Create Motion Clip"}
+                  content={
+                    language === "ko"
+                      ? "그룹 내 연속된 사진들을 프레임으로 결합하여 움직이는 GIF / WebM 모션 영상을 생성합니다."
+                      : "Combine burst/consecutive photos into an animated GIF or motion video."
+                  }
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenMotionCreator(true);
+                    }}
+                    className="px-3.5 py-2 bg-gradient-to-r from-blue-600/20 to-indigo-600/20 hover:from-blue-600 hover:to-indigo-600 border border-indigo-500/30 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-lg transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                  >
+                    <Sparkles size={13} className="text-amber-400 animate-pulse" />
+                    <span>
+                      {language === "ko" ? "모션 영상 생성" : "Create Motion"}
+                    </span>
+                  </button>
+                </Tooltip>
+              )}
+
+              <Tooltip
+                title={language === "ko" ? "중복 정리 실행" : "Execute Duplicate Resolution"}
+                content={
+                  language === "ko"
+                    ? `선택한 ${toKeepIds.length}개 파일만 보존하고 나머지 ${toDeleteIds.length}개 파일은 정리합니다.`
+                    : `Preserve ${toKeepIds.length} selected files and purge ${toDeleteIds.length} redundant files.`
+                }
+              >
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setOpenMotionCreator(true);
+                    onResolve(group, toDeleteIds);
                   }}
-                  className="px-3.5 py-2 bg-gradient-to-r from-blue-600/20 to-indigo-600/20 hover:from-blue-600 hover:to-indigo-600 border border-indigo-500/30 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-lg transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
-                  title={
-                    language === "ko"
-                      ? "연속된 사진으로 움직이는 영상 만들기"
-                      : "Merge to animated motion photo/video"
-                  }
+                  disabled={toKeepIds.length === 0 && toDeleteIds.length === 0}
+                  className={`px-4 sm:px-5 py-2 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-2xl transition-all cursor-pointer flex items-center gap-2 italic flex-1 lg:flex-initial justify-center ${
+                    toDeleteIds.length === 0
+                      ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/40"
+                      : "bg-rose-600 hover:bg-rose-500 shadow-rose-600/40"
+                  }`}
                 >
-                  <Sparkles size={13} className="text-amber-400 animate-pulse" />
-                  <span>
-                    {language === "ko" ? "모션 영상 생성" : "Create Motion"}
-                  </span>
+                  {toDeleteIds.length === 0 ? (
+                    <>
+                      <ShieldCheck size={14} /> {t("optimizeAll")}
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={14} /> {language === "ko" ? `보존 ${toKeepIds.length} • 삭제 ${toDeleteIds.length}` : `KEEP ${toKeepIds.length} • PURGE ${toDeleteIds.length}`}
+                    </>
+                  )}
                 </button>
-              )}
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onResolve(group, toDeleteIds);
-                }}
-                disabled={toKeepIds.length === 0 && toDeleteIds.length === 0}
-                className={`px-4 sm:px-5 py-2 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-2xl transition-all cursor-pointer flex items-center gap-2 italic flex-1 lg:flex-initial justify-center ${
-                  toDeleteIds.length === 0
-                    ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/40"
-                    : "bg-rose-600 hover:bg-rose-500 shadow-rose-600/40"
-                }`}
-              >
-                {toDeleteIds.length === 0 ? (
-                  <>
-                    <ShieldCheck size={14} /> {t("optimizeAll")}
-                  </>
-                ) : (
-                  <>
-                    <Trash2 size={14} /> {language === "ko" ? `보존 ${toKeepIds.length} • 삭제 ${toDeleteIds.length}` : `KEEP ${toKeepIds.length} • PURGE ${toDeleteIds.length}`}
-                  </>
-                )}
-              </button>
+              </Tooltip>
 
               <button
                 type="button"
@@ -1003,6 +1268,10 @@ export const DuplicateGroup = ({
                   language={language}
                   foldersList={groupComparison.folders}
                   isMultiFolder={groupComparison.isMultiFolder}
+                  onInspect={(p) => {
+                    const idx = group.photos.findIndex((item) => item.id === p.id);
+                    setInspectingPhotoIndex(idx >= 0 ? idx : 0);
+                  }}
                 />
               ) : localViewMode === "list" ? (
                 <div className="space-y-3">
@@ -1025,6 +1294,7 @@ export const DuplicateGroup = ({
                         folderIndex={folderIndex >= 0 ? folderIndex : 0}
                         bestSize={bestPhoto.size || 0}
                         isAllSameSize={groupComparison.isAllSameSize}
+                        onInspect={() => setInspectingPhotoIndex(pIdx)}
                       />
                     );
                   })}
@@ -1067,12 +1337,29 @@ export const DuplicateGroup = ({
                       onDoubleClick={(p) => {
                         SystemAPI.openInDefaultApp(p, addNotification);
                       }}
+                      onInspect={() => setInspectingPhotoIndex(pIdx)}
                     />
                   ))}
                 </div>
               )}
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {inspectingPhotoIndex !== null && (
+          <PhotoInspectionModal
+            photos={group.photos}
+            initialIndex={inspectingPhotoIndex}
+            bestPhotoId={bestPhoto.id}
+            toKeepIds={toKeepIds}
+            onToggleKeep={handleToggleKeep}
+            onKeepOnlyThis={handleKeepOnly}
+            onClose={() => setInspectingPhotoIndex(null)}
+            addNotification={addNotification}
+            language={language}
+          />
         )}
       </AnimatePresence>
 

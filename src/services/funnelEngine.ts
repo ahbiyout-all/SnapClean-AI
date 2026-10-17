@@ -1,5 +1,6 @@
 import { PhotoRecord } from './db';
 import { DedupeGroup, DedupeEngine } from './dedupeEngine';
+import { mobileWorkerPool } from './mobileWorkerPool';
 
 export interface FunnelMetrics {
   totalScanned: number;
@@ -26,11 +27,18 @@ export class FunnelEngine {
 
   /**
    * Stage 2: Sparse 12KB Chunk Hash
-   * Slices Head 4KB + Mid 4KB + Tail 4KB from file/blob without reading full multi-MB payload into memory.
+   * Hardware & Worker Accelerated: Slices Head 4KB + Mid 4KB + Tail 4KB from file/blob.
    */
   static async computeSparseHash(blobOrFile: Blob | File): Promise<string> {
     const size = blobOrFile.size;
     if (size === 0) return 'sparse_0_empty';
+
+    // Try Off-main-thread WebWorker computation first to avoid UI micro-stutters
+    try {
+      return await mobileWorkerPool.computeSparseHash(blobOrFile);
+    } catch {
+      // Graceful local thread fallback
+    }
 
     // If file is smaller than 12KB, read the whole thing
     if (size <= 12288) {
@@ -64,11 +72,23 @@ export class FunnelEngine {
 
   /**
    * Stage 3: Hardware-Accelerated Fast Low-Res Perceptual Hash (pHash / dHash)
-   * Uses createImageBitmap (GPU/Native decoder) to downscale to 32x32 directly without allocating 24MP canvases.
+   * Offloaded to Mobile Web Worker + OffscreenCanvas to guarantee 60fps main UI responsiveness.
    */
   static async computeFastPHash(blobOrUrl: Blob | File | string): Promise<string> {
     try {
       if (typeof window === 'undefined') return '0000000000000000';
+
+      // 1. Off-thread Web Worker acceleration for Blobs and Files
+      if (blobOrUrl instanceof Blob) {
+        try {
+          const workerResult = await mobileWorkerPool.computePHash(blobOrUrl);
+          if (workerResult && workerResult.pHash) {
+            return workerResult.pHash;
+          }
+        } catch {
+          // Graceful fallback to main thread OffscreenCanvas / DOM
+        }
+      }
 
       let bmp: ImageBitmap | null = null;
       let imgElement: HTMLImageElement | null = null;

@@ -11,6 +11,17 @@ export interface DedupeGroup {
   confidence?: number;
   reasons?: string[];
   representativeDate?: number;
+  subType?: 'exact_byte' | 'visual_similar' | 'burst' | 'resized' | 'cross_folder' | 'filename_copy';
+  similarityPercent?: number;
+  timeDiffSeconds?: number;
+  matchDetails?: {
+    sizeMatch?: boolean;
+    hashMatch?: boolean;
+    burstIntervalMs?: number;
+    resolutionDifferent?: boolean;
+    crossFolder?: boolean;
+    namePatternMatch?: boolean;
+  };
 }
 
 export class DedupeEngine {
@@ -265,29 +276,68 @@ export class DedupeEngine {
    * 2. Aesthetic Appeal (Composition Score)
    * 3. Higher resolution/size
    */
-  static getBestPhoto(group: PhotoRecord[], rule: 'sharpest' | 'largest' | 'newest' | 'oldest' = 'sharpest'): PhotoRecord {
+  static getBestPhoto(
+    group: PhotoRecord[], 
+    rule: 'sharpest' | 'largest' | 'newest' | 'oldest' | 'highest_res' | 'rich_exif' | 'priority_folder' = 'sharpest',
+    priorityFolder?: string
+  ): PhotoRecord {
     return [...group].sort((a, b) => {
       const aIsVideo = a.type?.startsWith('video/');
       const bIsVideo = b.type?.startsWith('video/');
+
+      // Priority Folder rule
+      if (rule === 'priority_folder' && priorityFolder) {
+        const normPriority = priorityFolder.toLowerCase().replace(/\\/g, '/');
+        const aInPriority = a.path?.toLowerCase().replace(/\\/g, '/').startsWith(normPriority);
+        const bInPriority = b.path?.toLowerCase().replace(/\\/g, '/').startsWith(normPriority);
+        if (aInPriority && !bInPriority) return -1;
+        if (!aInPriority && bInPriority) return 1;
+      }
+
+      if (rule === 'highest_res') {
+        const aPixels = (a.width || 0) * (a.height || 0);
+        const bPixels = (b.width || 0) * (b.height || 0);
+        if (bPixels !== aPixels) return bPixels - aPixels;
+        if (b.size !== a.size) return b.size - a.size;
+      }
+
+      if (rule === 'rich_exif') {
+        const getExifScore = (p: PhotoRecord) => {
+          let score = 0;
+          if (p.cameraModel) score += 2;
+          if (p.latitude && p.longitude) score += 3;
+          if (p.dateTaken) score += 2;
+          if (p.iso) score += 1;
+          if (p.fNumber) score += 1;
+          if (p.exposureTime) score += 1;
+          if (p.width && p.height) score += 1;
+          return score;
+        };
+        const aScore = getExifScore(a);
+        const bScore = getExifScore(b);
+        if (bScore !== aScore) return bScore - aScore;
+      }
 
       if (rule === 'largest') {
         if (b.size !== a.size) return b.size - a.size;
       }
       if (rule === 'newest') {
-        return b.lastModified - a.lastModified;
+        const bTime = b.dateTaken || b.lastModified || 0;
+        const aTime = a.dateTaken || a.lastModified || 0;
+        return bTime - aTime;
       }
       if (rule === 'oldest') {
-        return a.lastModified - b.lastModified;
+        const bTime = b.dateTaken || b.lastModified || 0;
+        const aTime = a.dateTaken || a.lastModified || 0;
+        return aTime - bTime;
       }
       
       // Default / Sharpest rule
       // FOR VIDEOS: Prioritize resolution/size as we don't have per-frame analysis
       if (aIsVideo || bIsVideo) {
         if (aIsVideo && bIsVideo) {
-          // Both are videos, compare size
           return b.size - a.size;
         }
-        // One is video, prioritize video if it's "larger" or generally better
         if (b.size !== a.size) return b.size - a.size;
       }
 
@@ -307,7 +357,7 @@ export class DedupeEngine {
 
       // Fallback to Size
       if (b.size !== a.size) return b.size - a.size;
-      return b.lastModified - a.lastModified;
+      return (b.dateTaken || b.lastModified || 0) - (a.dateTaken || a.lastModified || 0);
     })[0];
   }
 

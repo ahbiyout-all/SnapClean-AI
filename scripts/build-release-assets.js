@@ -80,7 +80,7 @@ export async function buildAllReleaseInstallers() {
 
   // 4. Generate Manifest for GitHub Releases
   const releaseManifest = {
-    repository: 'AhBiYout/SnapClean-AI',
+    repository: 'AhBiYout-all/SnapClean-AI',
     version: version,
     tag: `v${version}`,
     createdAt: new Date().toISOString(),

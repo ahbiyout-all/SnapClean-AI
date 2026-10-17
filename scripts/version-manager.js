@@ -187,9 +187,9 @@ export async function syncVersion(options = {}) {
     channel: 'stable',
     engine: 'Dexie+pHash-v2.4+NativeDLL+Telemetry+GitHubLiveUpdater',
     github: {
-      owner: 'AhBiYout',
-      repo: 'AhBiYout-all',
-      releasesUrl: 'https://github.com/AhBiYout/AhBiYout-all/releases'
+      owner: 'AhBiYout-all',
+      repo: 'SnapClean-AI',
+      releasesUrl: 'https://github.com/AhBiYout-all/SnapClean-AI/releases'
     },
     environment: process.env.NODE_ENV || 'production',
     latestPatchSummary: 'GitHub Releases 기반 실시간 자동 업데이트 시스템 및 깃허브 자동화 파이프라인 구축',

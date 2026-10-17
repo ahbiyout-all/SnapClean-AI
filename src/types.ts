@@ -23,6 +23,18 @@ export interface DuplicateGroup {
   photos: Photo[];
   redundantSize?: number;
   confidence?: number;
+  reasons?: string[];
+  subType?: 'exact_byte' | 'visual_similar' | 'burst' | 'resized' | 'cross_folder' | 'filename_copy';
+  similarityPercent?: number;
+  timeDiffSeconds?: number;
+  matchDetails?: {
+    sizeMatch?: boolean;
+    hashMatch?: boolean;
+    burstIntervalMs?: number;
+    resolutionDifferent?: boolean;
+    crossFolder?: boolean;
+    namePatternMatch?: boolean;
+  };
 }
 
 export interface ScanStats {

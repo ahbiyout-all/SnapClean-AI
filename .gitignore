@@ -11,6 +11,8 @@ out/
 bin/
 obj/
 *.tsbuildinfo
+.vite/
+.parcel-cache/
 
 # Binary Executables & Dynamic Libraries (Windows, Mac, Linux)
 *.exe
@@ -37,18 +39,28 @@ android/.gradle/
 ios/build/
 ios/Pods/
 
-# Rust & Tauri Builds
+# Rust & Tauri Builds & WASM artifacts
 src-tauri/target/
+crates/*/target/
 target/
 Cargo.lock
+**/pkg/
+*.wasm
 
-# Test Coverage & Temp
+# Test Coverage & Temp & Runtime Storage
 coverage/
 .nyc_output/
 *.tmp
 *.temp
 *.swp
 *.swo
+*~
+public/mock_storage/*
+!public/mock_storage/.gitkeep
+
+# AI Studio & Internal Cache
+.aistudio/
+.cache/
 
 # Environment Variables & Credentials
 .env
@@ -58,6 +70,11 @@ coverage/
 *.key
 *.cert
 *.pfx
+*.keystore
+*.jks
+id_rsa*
+firebase-applet-config.json
+serviceAccountKey.json
 
 # Operating System Files
 .DS_Store
@@ -92,7 +109,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Duplicate Lockfiles (npm is primary)
+# Duplicate Lockfiles (npm is primary single source of truth)
 bun.lock
 bun.lockb
 yarn.lock
@@ -100,4 +117,9 @@ pnpm-lock.yaml
 
 # Temporary & Migration Scripts
 *replace_keys*
+
+# Local Deployment & Push Automation Scripts
+github-push.bat
+scripts/github-push.bat
+*github-push*.bat
 

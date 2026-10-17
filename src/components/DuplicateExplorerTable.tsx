@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   Folder,
   Copy,
@@ -18,10 +18,14 @@ import {
   Calendar,
   Camera,
   Layers,
+  Maximize2,
 } from "lucide-react";
 import { PhotoRecord } from "../services/db";
 import { SystemAPI } from "../services/systemApi";
 import { libraryManager } from "../services/PhotoLibraryManager";
+import { fastViewEngine } from "../services/fastViewEngine";
+import { blobRegistry } from "../utils/blobRegistry";
+import { Tooltip, InfoTooltip } from "./Tooltip";
 
 export interface DuplicateExplorerTableProps {
   photos: PhotoRecord[];
@@ -40,6 +44,7 @@ export interface DuplicateExplorerTableProps {
   language: string;
   foldersList: string[];
   isMultiFolder: boolean;
+  onInspect?: (photo: PhotoRecord) => void;
 }
 
 type SortColumn =
@@ -90,6 +95,96 @@ function getFileExtension(filePath?: string): string {
   return dot !== -1 ? name.substring(dot + 1).toUpperCase() : "";
 }
 
+const ExplorerRowThumbnail: React.FC<{
+  photo: PhotoRecord;
+  isBest?: boolean;
+  onInspect?: (photo: PhotoRecord) => void;
+  addNotification: (title: string, message: string, type: "info" | "success" | "warning" | "error") => void;
+  language: string;
+}> = ({ photo, isBest, onInspect, addNotification, language }) => {
+  const [thumbSrc, setThumbSrc] = useState<string | null>(() => {
+    return fastViewEngine.getInstantThumbnail(photo.path) || null;
+  });
+  const [hasError, setHasError] = useState(false);
+
+  const isPdf = photo.type === "application/pdf" || photo.path?.toLowerCase().endsWith(".pdf");
+  const isVideo = photo.type?.startsWith("video/") || photo.path?.toLowerCase().match(/\.(mp4|mov|avi|mkv|webm)$/);
+
+  useEffect(() => {
+    if (isPdf || isVideo) return;
+    let active = true;
+
+    if (photo.thumbnail && photo.thumbnail.size > 0) {
+      const url = blobRegistry.create(photo.thumbnail);
+      setThumbSrc(url);
+      return () => { blobRegistry.revoke(url); };
+    }
+
+    const instant = fastViewEngine.getInstantThumbnail(photo.path);
+    if (instant) {
+      setThumbSrc(instant);
+      return;
+    }
+
+    fastViewEngine.getFastThumbnail(photo)
+      .then((res) => {
+        if (active && res.url) setThumbSrc(res.url);
+      })
+      .catch(() => {
+        if (active) {
+          const sys = SystemAPI.getImageUrl(photo.path, "thumbnail");
+          setThumbSrc(sys);
+        }
+      });
+
+    return () => { active = false; };
+  }, [photo.path, photo.thumbnail, photo.blob, isPdf, isVideo]);
+
+  return (
+    <div
+      onClick={(e) => {
+        e.stopPropagation();
+        if (onInspect) {
+          onInspect(photo);
+        } else {
+          SystemAPI.openInDefaultApp(photo, addNotification);
+        }
+      }}
+      className="w-9 h-9 rounded-lg bg-slate-900 border border-white/10 overflow-hidden shrink-0 flex items-center justify-center shadow relative group/thumb cursor-pointer hover:border-indigo-400 transition-colors"
+      title={
+        language === "ko"
+          ? "클릭하여 사진 정밀 미리보기 / 비교"
+          : "Click to preview / inspect photo in full viewer"
+      }
+      style={{ backgroundColor: fastViewEngine.getInstantDominantColor(photo.path) }}
+    >
+      {thumbSrc && !hasError ? (
+        <img
+          src={thumbSrc}
+          alt=""
+          className="w-full h-full object-cover"
+          referrerPolicy="no-referrer"
+          onError={() => setHasError(true)}
+        />
+      ) : isPdf ? (
+        <FileText size={16} className="text-red-400" />
+      ) : isVideo ? (
+        <Video size={16} className="text-sky-400" />
+      ) : (
+        <ImageIcon size={16} className="text-slate-500/60" />
+      )}
+
+      {isBest && (
+        <div className="absolute top-0.5 right-0.5 w-2 h-2 bg-amber-400 rounded-full shadow" />
+      )}
+
+      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
+        <ExternalLink size={12} />
+      </div>
+    </div>
+  );
+};
+
 export const DuplicateExplorerTable: React.FC<DuplicateExplorerTableProps> = ({
   photos,
   bestPhotoId,
@@ -103,6 +198,7 @@ export const DuplicateExplorerTable: React.FC<DuplicateExplorerTableProps> = ({
   language,
   foldersList,
   isMultiFolder,
+  onInspect,
 }) => {
   const [sortCol, setSortCol] = useState<SortColumn>("status");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -361,16 +457,18 @@ export const DuplicateExplorerTable: React.FC<DuplicateExplorerTableProps> = ({
                   (folderIndex >= 0 ? folderIndex : 0) % folderColorClasses.length
                 ];
 
-              const thumbUrl = !isPdf
-                ? photo.thumbnail && photo.thumbnail.size > 0
-                  ? libraryManager.getBlobUrl(photo.path, () =>
-                      URL.createObjectURL(photo.thumbnail!),
-                    )
-                  : photo.blob && photo.blob.size > 0
-                  ? libraryManager.getBlobUrl(photo.path, () =>
-                      URL.createObjectURL(photo.blob!),
-                    )
-                  : SystemAPI.getImageUrl(photo.path, "thumbnail")
+              const instantThumb = fastViewEngine.getInstantThumbnail(photo.path);
+              const thumbUrl = !isPdf && !isVideo
+                ? instantThumb ||
+                  (photo.thumbnail && photo.thumbnail.size > 0
+                    ? libraryManager.getBlobUrl(photo.path, () =>
+                        URL.createObjectURL(photo.thumbnail!),
+                      )
+                    : photo.blob && photo.blob.size > 0
+                    ? libraryManager.getBlobUrl(photo.path, () =>
+                        URL.createObjectURL(photo.blob!),
+                      )
+                    : SystemAPI.getImageUrl(photo.path, "thumbnail"))
                 : null;
 
               return (
@@ -379,10 +477,14 @@ export const DuplicateExplorerTable: React.FC<DuplicateExplorerTableProps> = ({
                   onClick={() => onSelectPhoto?.(photo.id || null)}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
-                    SystemAPI.openInDefaultApp(photo, addNotification);
+                    if (onInspect) {
+                      onInspect(photo);
+                    } else {
+                      SystemAPI.openInDefaultApp(photo, addNotification);
+                    }
                   }}
                   onContextMenu={(e) => handleContextMenu(e, photo)}
-                  className={`group transition-colors duration-150 cursor-pointer ${
+                  className={`group transition-colors duration-150 cursor-pointer cv-row ${
                     isSelected
                       ? "bg-indigo-600/25 ring-1 ring-inset ring-indigo-500"
                       : isKept
@@ -433,41 +535,13 @@ export const DuplicateExplorerTable: React.FC<DuplicateExplorerTableProps> = ({
                   <td className="p-3 font-sans">
                     <div className="flex items-center gap-3">
                       {/* Mini Thumbnail */}
-                      <div
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          SystemAPI.openInDefaultApp(photo, addNotification);
-                        }}
-                        className="w-9 h-9 rounded-lg bg-slate-900 border border-white/10 overflow-hidden shrink-0 flex items-center justify-center shadow relative group/thumb cursor-pointer hover:border-indigo-400 transition-colors"
-                        title={
-                          language === "ko"
-                            ? "더블클릭 또는 클릭하여 Windows 연결 프로그램으로 열기"
-                            : "Double-click to open in Windows default application"
-                        }
-                      >
-                        {thumbUrl ? (
-                          <img
-                            src={thumbUrl}
-                            alt=""
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : isPdf ? (
-                          <FileText size={16} className="text-red-400" />
-                        ) : isVideo ? (
-                          <Video size={16} className="text-sky-400" />
-                        ) : (
-                          <ImageIcon size={16} className="text-slate-600" />
-                        )}
-
-                        {isBest && (
-                          <div className="absolute top-0.5 right-0.5 w-2 h-2 bg-amber-400 rounded-full shadow" />
-                        )}
-
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
-                          <ExternalLink size={10} />
-                        </div>
-                      </div>
+                      <ExplorerRowThumbnail
+                        photo={photo}
+                        isBest={isBest}
+                        onInspect={onInspect}
+                        addNotification={addNotification}
+                        language={language}
+                      />
 
                       {/* Name and AI Best Tag */}
                       <div className="min-w-0 flex-1">
@@ -597,52 +671,91 @@ export const DuplicateExplorerTable: React.FC<DuplicateExplorerTableProps> = ({
                   {/* Actions */}
                   <td className="p-3 text-right pr-4 font-sans">
                     <div className="flex items-center justify-end gap-1.5">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          SystemAPI.openInDefaultApp(photo, addNotification);
-                        }}
-                        className="p-1.5 bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white rounded-lg transition-colors cursor-pointer border border-white/5"
-                        title={
+                      {onInspect && (
+                        <Tooltip
+                          title={language === "ko" ? "정밀 사진 분석" : "Inspect Forensic View"}
+                          content={
+                            language === "ko"
+                              ? "전체화면에서 줌인/비교/EXIF 정보를 정밀 분석합니다."
+                              : "Open full inspection viewer with zoom, EXIF, and comparison."
+                          }
+                        >
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onInspect(photo);
+                            }}
+                            className="p-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 hover:text-white rounded-lg transition-colors cursor-pointer border border-indigo-500/30"
+                          >
+                            <Maximize2 size={13} />
+                          </button>
+                        </Tooltip>
+                      )}
+
+                      <Tooltip
+                        title={language === "ko" ? "기본 앱으로 열기" : "Open in Default App"}
+                        content={
                           language === "ko"
-                            ? "Windows 연결 프로그램으로 열기 (더블클릭 가능)"
-                            : "Open with Windows default application"
+                            ? "Windows 기본 사진 뷰어로 원본 파일을 엽니다."
+                            : "Launch file in default Windows Photo Viewer application."
                         }
                       >
-                        <ExternalLink size={13} />
-                      </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            SystemAPI.openInDefaultApp(photo, addNotification);
+                          }}
+                          className="p-1.5 bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white rounded-lg transition-colors cursor-pointer border border-white/5"
+                        >
+                          <ExternalLink size={13} />
+                        </button>
+                      </Tooltip>
 
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (photo.id) onKeepOnlyThis(photo.id);
-                        }}
-                        className="px-2 py-1 bg-indigo-600/15 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
-                        title={
+                      <Tooltip
+                        title={language === "ko" ? "이 파일만 보존" : "Keep Only This"}
+                        content={
                           language === "ko"
-                            ? "이 파일만 보존하고 나머지는 삭제"
-                            : "Keep only this item"
+                            ? "이 사진만 보존하고 그룹 내 다른 중복 사진은 모두 삭제 대상으로 지정합니다."
+                            : "Keep only this photo and mark other duplicates in group for purge."
                         }
                       >
-                        {language === "ko" ? "이것만" : "Only"}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (photo.id) onKeepOnlyThis(photo.id);
+                          }}
+                          className="px-2 py-1 bg-indigo-600/15 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                        >
+                          {language === "ko" ? "이것만" : "Only"}
+                        </button>
+                      </Tooltip>
 
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (photo.id) onToggleKeep(photo.id);
-                        }}
-                        className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase transition-all cursor-pointer ${
+                      <Tooltip
+                        title={isKept ? (language === "ko" ? "보존 상태" : "Keeping") : (language === "ko" ? "삭제 대상" : "Purging")}
+                        content={
                           isKept
-                            ? "bg-emerald-600 hover:bg-emerald-500 text-white"
-                            : "bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30"
-                        }`}
+                            ? (language === "ko" ? "클릭 시 삭제 대상(DEL)으로 전환" : "Click to mark for deletion")
+                            : (language === "ko" ? "클릭 시 보존 대상(KEEP)으로 전환" : "Click to preserve on disk")
+                        }
                       >
-                        {isKept ? "KEEP" : "DEL"}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (photo.id) onToggleKeep(photo.id);
+                          }}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase transition-all cursor-pointer ${
+                            isKept
+                              ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                              : "bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30"
+                          }`}
+                        >
+                          {isKept ? "KEEP" : "DEL"}
+                        </button>
+                      </Tooltip>
                     </div>
                   </td>
                 </tr>
@@ -665,6 +778,24 @@ export const DuplicateExplorerTable: React.FC<DuplicateExplorerTableProps> = ({
           <div className="px-2.5 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-white/5 truncate">
             {getFileName(contextMenu.photo.path)}
           </div>
+
+          {onInspect && (
+            <button
+              type="button"
+              onClick={() => {
+                onInspect(contextMenu.photo);
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-2 hover:bg-indigo-600 hover:text-white rounded-lg text-left transition-colors cursor-pointer mt-1 font-bold text-indigo-300"
+            >
+              <Maximize2 size={14} />
+              <span>
+                {language === "ko"
+                  ? "정밀 사진 분석 뷰어로 보기"
+                  : "Inspect in Photo Viewer"}
+              </span>
+            </button>
+          )}
 
           <button
             type="button"

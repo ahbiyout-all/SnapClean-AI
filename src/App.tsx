@@ -58,6 +58,7 @@ import {
   ChevronUp,
   MoreVertical,
   PieChart,
+  FastForward,
   Users,
   Sparkles,
   Calendar,
@@ -140,6 +141,7 @@ import { APP_VERSION_INFO } from "./version";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { UpdateNotificationModal } from "./components/UpdateNotificationModal";
 import { MultiplatformInstallModal } from "./components/MultiplatformInstallModal";
+import { GlobalTooltip } from "./components/GlobalTooltip";
 
 // Components
 export default function App() {
@@ -331,6 +333,7 @@ export default function App() {
     handlePauseScan,
     handleResumeScan,
     handleStopScanRequest,
+    handleSkipDeepScan,
     isPaused,
     isStopped,
     scanStats,
@@ -343,6 +346,8 @@ export default function App() {
     setDupSortBy,
     autoResolveRule,
     setAutoResolveRule,
+    dedupeOptions,
+    setDedupeOptions,
     originalHandling,
     setOriginalHandling,
     orgTargetFolder,
@@ -362,6 +367,8 @@ export default function App() {
     setBackupFolder,
     scanSpeed,
     setScanSpeed,
+    quickScanMode,
+    setQuickScanMode,
     bgSyncConfig,
     updateBgSyncConfig,
     triggerIncrementalSync,
@@ -1845,27 +1852,42 @@ export default function App() {
         </aside>
 
         <main className="flex-1 overflow-y-auto pb-32 lg:pb-0">
-          <header className="sticky top-0 z-30 flex flex-col md:flex-row md:items-center justify-between p-4 lg:p-6 glass border-none mb-4 gap-4 md:gap-0">
-            <div className="flex items-center gap-3">
-              <button
-                className="lg:hidden p-2 bg-white/5 rounded-xl text-slate-300 hover:text-white"
-                onClick={() => setMobileMenuOpen(true)}
-              >
-                <Menu size={20} />
-              </button>
-              <h2 className="text-xl md:text-2xl font-bold tracking-tight capitalize">
-                {t(activeTab as any)}
-              </h2>
+          <header className="sticky top-0 z-30 flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 lg:p-6 bg-slate-950/90 backdrop-blur-2xl border-b border-white/10 shadow-xl mb-3 sm:mb-4 gap-3 sm:gap-4">
+            <div className="flex items-center justify-between sm:justify-start w-full sm:w-auto gap-3">
+              <div className="flex items-center gap-2.5">
+                <button
+                  className="lg:hidden p-2 bg-white/5 hover:bg-white/10 rounded-xl text-slate-300 hover:text-white transition-all cursor-pointer"
+                  onClick={() => setMobileMenuOpen(true)}
+                  title="Menu"
+                >
+                  <Menu size={20} />
+                </button>
+                <h2 className="text-lg sm:text-xl md:text-2xl font-black tracking-tight capitalize text-white">
+                  {t(activeTab as any)}
+                </h2>
+              </div>
+
+              {/* Mobile Quick Action Pill */}
+              <div className="flex items-center gap-1.5 sm:hidden">
+                <button
+                  onClick={() => setShowDiagnostics(true)}
+                  className="p-2 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20"
+                  title={t("auditHealth")}
+                >
+                  <Activity size={16} />
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto no-scrollbar pb-1 md:pb-0">
+
+            <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 w-full sm:w-auto flex-wrap sm:flex-nowrap">
               <PWAInstallButton language={language} />
               <button
                 onClick={() => setShowDiagnostics(true)}
-                className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-xl border border-indigo-500/20 transition-all cursor-pointer group mr-1"
+                className="hidden sm:flex shrink-0 items-center gap-2 px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-xl border border-indigo-500/20 transition-all cursor-pointer group mr-1"
                 title={t("auditHealth")}
               >
                 <Activity size={14} className="group-hover:animate-pulse text-indigo-400" />
-                <span className="text-[10px] font-black uppercase tracking-wider hidden sm:inline whitespace-nowrap">
+                <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">
                   {t("auditHealth")}
                 </span>
                 <div
@@ -1873,10 +1895,9 @@ export default function App() {
                 />
               </button>
 
-
               {peerCount > 0 && (
                 <div
-                  className="shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-xl border mr-2 md:mr-4 group cursor-help transition-all bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                  className="shrink-0 flex items-center gap-2 px-2.5 py-1.5 rounded-xl border group cursor-help transition-all bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
                   title="Cross-Device Heritage Sync Active"
                 >
                   <Wifi size={14} className="animate-pulse shrink-0" />
@@ -1888,37 +1909,26 @@ export default function App() {
                   <div className="shrink-0 w-2 h-2 rounded-full bg-emerald-500"></div>
                 </div>
               )}
+
               {scanning && (
-                <div className="shrink-0 flex items-center gap-3 md:gap-6 bg-slate-950/85 border border-white/10 shadow-2xl backdrop-blur-md px-4 md:px-6 py-3.5 rounded-2xl w-full max-w-[560px] animate-fade-in">
+                <div className="shrink-0 flex items-center gap-3 bg-slate-900/90 border border-indigo-500/30 shadow-2xl backdrop-blur-md px-3 sm:px-4 py-2 rounded-xl w-full max-w-[560px] animate-fade-in">
                   <div className="flex flex-col flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-2 gap-4">
-                      <span className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1.5 whitespace-nowrap">
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <span className="text-[10px] sm:text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1 whitespace-nowrap">
                         {isPaused ? (
-                          <Pause
-                            size={12}
-                            className="text-amber-400 shrink-0"
-                          />
+                          <Pause size={12} className="text-amber-400 shrink-0" />
                         ) : (
-                          <RefreshCw
-                            size={12}
-                            className="animate-spin text-blue-400 shrink-0"
-                          />
+                          <RefreshCw size={12} className="animate-spin text-blue-400 shrink-0" />
                         )}
                         {isPaused ? "Scan Paused" : t("deepScanning")}
                       </span>
-                      <span className="text-xs md:text-sm font-extrabold font-mono text-slate-100 tracking-tight bg-slate-950/60 px-3 py-1 rounded-lg border border-white/5 whitespace-nowrap shadow-inner shrink-0">
-                        <span className="text-blue-400">
-                          {scanStats.processed.toLocaleString()}
-                        </span>
-                        <span className="text-slate-500 font-semibold text-xs mx-1.5">
-                          /
-                        </span>
-                        <span className="text-slate-300">
-                          {scanStats.total > 0 ? scanStats.total.toLocaleString() : "..."}
-                        </span>
+                      <span className="text-[10px] sm:text-xs font-extrabold font-mono text-slate-100 tracking-tight bg-slate-950/60 px-2 py-0.5 rounded border border-white/5 whitespace-nowrap shrink-0">
+                        <span className="text-blue-400">{scanStats.processed.toLocaleString()}</span>
+                        <span className="text-slate-500 mx-1">/</span>
+                        <span className="text-slate-300">{scanStats.total > 0 ? scanStats.total.toLocaleString() : "..."}</span>
                       </span>
                     </div>
-                    <div className="h-2 bg-slate-950/60 rounded-full overflow-hidden mb-2 border border-white/5 shrink-0 relative">
+                    <div className="h-1.5 bg-slate-950 rounded-full overflow-hidden mb-1 border border-white/5 shrink-0 relative">
                       {scanStats.total > 0 ? (
                         <div
                           className={`h-full transition-all duration-300 ${isPaused ? "bg-amber-500" : "bg-linear-to-r from-blue-500 to-indigo-500"}`}
@@ -1930,72 +1940,72 @@ export default function App() {
                         <div className="h-full w-full bg-linear-to-r from-blue-500/30 via-indigo-500 to-blue-500/30 animate-pulse" />
                       )}
                     </div>
-                    <span
-                      className="text-[10px] md:text-xs font-mono text-slate-400 truncate whitespace-nowrap"
-                      title={scanStats.currentPath}
-                    >
-                      {isStopped
-                        ? "Winding down..."
-                        : isPaused
-                          ? "Standing by..."
-                          : scanStats.currentPath || t("initializingScanner")}
-                    </span>
                   </div>
 
-                  <div className="shrink-0 flex items-center gap-1 md:gap-1.5 border-l border-white/10 pl-2 md:pl-4 ml-0 md:ml-2">
+                  <div className="shrink-0 flex items-center gap-1 border-l border-white/10 pl-2">
+                    {scanStats.stage === 'deep_analysis' && (
+                      <button
+                        onClick={handleSkipDeepScan}
+                        className="px-2 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg transition-colors cursor-pointer flex items-center gap-1 text-xs font-bold"
+                        title={language === "ko" ? "AI 정밀분석 건너뛰기" : "Skip AI Deep Scan"}
+                      >
+                        <FastForward size={13} fill="currentColor" />
+                        <span className="hidden md:inline">{language === "ko" ? "건너뛰기" : "Skip"}</span>
+                      </button>
+                    )}
                     {isPaused ? (
                       <button
                         onClick={handleResumeScan}
-                        className="p-2.5 bg-white/5 hover:bg-emerald-500/10 text-emerald-400 rounded-xl transition-colors shrink-0 cursor-pointer"
+                        className="p-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-lg transition-colors cursor-pointer"
                         title="Resume Scan"
                       >
-                        <Play size={18} fill="currentColor" />
+                        <Play size={14} fill="currentColor" />
                       </button>
                     ) : (
                       <button
                         onClick={handlePauseScan}
-                        className="p-2.5 bg-white/5 hover:bg-amber-500/10 text-amber-400 rounded-xl transition-colors shrink-0 cursor-pointer"
+                        className="p-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 rounded-lg transition-colors cursor-pointer"
                         title="Pause Scan"
                       >
-                        <Pause size={18} fill="currentColor" />
+                        <Pause size={14} fill="currentColor" />
                       </button>
                     )}
                     <button
                       onClick={handleStopScanRequest}
                       disabled={isStopped}
-                      className="p-2.5 bg-white/5 hover:bg-rose-500/10 text-rose-400 rounded-xl transition-colors disabled:opacity-30 shrink-0 cursor-pointer"
+                      className="p-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 rounded-lg transition-colors disabled:opacity-30 cursor-pointer"
                       title="Stop Scan"
                     >
-                      <Square size={18} fill="currentColor" />
+                      <Square size={14} fill="currentColor" />
                     </button>
                   </div>
                 </div>
               )}
 
-              <div className="shrink-0 relative flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
                 <button
                   onClick={() => setShowScanSettings(!showScanSettings)}
-                  className={`shrink-0 p-2 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 ${
+                  className={`flex-1 sm:flex-initial px-3 py-2 rounded-xl border transition-all cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold ${
                     showScanSettings
-                      ? "bg-indigo-500/20 border-indigo-500/40 text-indigo-400"
-                      : "bg-white/5 border-white/5 text-slate-400 hover:text-slate-200 hover:bg-white/10"
+                      ? "bg-indigo-500/20 border-indigo-500/40 text-indigo-300"
+                      : "bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10"
                   }`}
                   title={
                     language === "ko"
-                      ? "스캔 설정 (파일 형식 필터)"
-                      : "Scan Settings (File format filter)"
+                      ? "스캔 설정 (파일 형식 및 고속/전수 모드)"
+                      : "Scan Settings (File formats & Quick/Deep mode)"
                   }
                 >
-                  <SlidersHorizontal size={18} className="shrink-0" />
-                  <span className="text-xs font-bold hidden sm:inline whitespace-nowrap">
-                    {language === "ko" ? "스캔 형식" : "Scan Formats"}
+                  <SlidersHorizontal size={15} className="shrink-0 text-indigo-400" />
+                  <span className="whitespace-nowrap">
+                    {language === "ko" ? "스캔 설정" : "Settings"}
                   </span>
                   {scanFormats.length < 22 ? (
-                    <span className="shrink-0 bg-indigo-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full flex items-center justify-center">
+                    <span className="shrink-0 bg-indigo-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full flex items-center justify-center">
                       {scanFormats.length}
                     </span>
                   ) : (
-                    <span className="shrink-0 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center justify-center whitespace-nowrap">
+                    <span className="shrink-0 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold px-1.5 py-0.2 rounded-full flex items-center justify-center whitespace-nowrap">
                       {language === "ko" ? "전체" : "All"}
                     </span>
                   )}
@@ -2008,14 +2018,14 @@ export default function App() {
                       : handleSelectDirectory()
                   }
                   disabled={scanning || scanFormats.length === 0}
-                  className="shrink-0 flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-lg shadow-indigo-600/20 cursor-pointer"
+                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-3.5 py-2 rounded-xl text-xs font-black shadow-lg shadow-indigo-600/25 cursor-pointer transition-all active:scale-95"
                 >
                   {scanning ? (
-                    <RefreshCw className="shrink-0 animate-spin" size={18} />
+                    <RefreshCw className="shrink-0 animate-spin" size={15} />
                   ) : (
-                    <Zap size={18} className="shrink-0" />
+                    <Zap size={15} className="shrink-0 text-amber-300 fill-amber-300" />
                   )}
-                  <span className="whitespace-nowrap hidden sm:inline">
+                  <span className="whitespace-nowrap">
                     {scanning ? t("processingBatch") : t("scanFiles")}
                   </span>
                 </button>
@@ -2023,7 +2033,7 @@ export default function App() {
             </div>
           </header>
 
-          <div className="p-4 lg:p-6 max-w-7xl mx-auto flex flex-col gap-8">
+          <div className="p-3 sm:p-4 lg:p-6 max-w-7xl mx-auto flex flex-col gap-4 sm:gap-8">
             {/* Progressive Discovery & Smart Background Sync Banner */}
             <ProgressiveDiscoveryBanner
               scanning={scanning}
@@ -2236,6 +2246,9 @@ export default function App() {
                 originalHandling={originalHandling}
                 setOriginalHandling={setOriginalHandling}
                 isAiConfigured={isAiConfigured}
+                dedupeOptions={dedupeOptions}
+                setDedupeOptions={setDedupeOptions}
+                onRescanDuplicates={detectDuplicates}
               />
             )}
 
@@ -2519,6 +2532,7 @@ export default function App() {
           onPause={handlePauseScan}
           onResume={handleResumeScan}
           onStop={handleStopScanRequest}
+          onSkipDeepScan={handleSkipDeepScan}
           onViewDuplicates={() => setActiveTab("duplicates")}
         />
 
@@ -2593,17 +2607,20 @@ export default function App() {
           {showScanSettings && (
             <div
               key="scan-settings-overlay"
-              className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm"
+              className="fixed inset-0 z-[500] flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setShowScanSettings(false);
+              }}
             >
               <motion.div
-                initial={{ scale: 0.9, opacity: 0, scaleY: 0.95 }}
-                animate={{ scale: 1, opacity: 1, scaleY: 1 }}
-                exit={{ scale: 0.9, opacity: 0, scaleY: 0.95 }}
-                transition={{ type: "spring", duration: 0.3 }}
-                className="relative w-full max-w-md p-6 rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl flex flex-col gap-5 z-[501]"
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                transition={{ type: "spring", duration: 0.25 }}
+                className="relative w-full max-w-lg max-h-[92dvh] sm:max-h-[88dvh] p-4 sm:p-6 rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl flex flex-col z-[501] overflow-hidden my-auto"
               >
-                {/* Header */}
-                <div className="flex items-center justify-between pb-3 border-b border-white/5">
+                {/* Pinned Header */}
+                <div className="flex items-center justify-between pb-3 border-b border-white/10 shrink-0">
                   <div className="flex items-center gap-2">
                     <SlidersHorizontal
                       size={18}
@@ -2611,8 +2628,8 @@ export default function App() {
                     />
                     <span className="text-sm font-black uppercase tracking-wider text-slate-100">
                       {language === "ko"
-                        ? "스캔 대상 형식 필터"
-                        : "Scan Format Filters"}
+                        ? "스캔 설정 및 구성"
+                        : "Scan Settings & Presets"}
                     </span>
                   </div>
                   <button
@@ -2623,12 +2640,165 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Sub text */}
-                <p className="text-xs text-slate-400 leading-relaxed -mt-1">
-                  {language === "ko"
-                    ? "스캔 시 탐색하고 가공할 대상 파일 확장자들을 지정하세요. 선택된 확장자들만 분석 분석 범위에 매핑 동작합니다."
-                    : "Select the file formats you want to scan and organize. Unselected formats will be ignored."}
-                </p>
+                {/* Scrollable Body */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 py-2 space-y-3.5 sm:space-y-4 min-h-0">
+                  {/* Sub text */}
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    {language === "ko"
+                      ? "스캔 모드 및 탐색할 대상 파일 확장자들을 지정하세요. 선택한 프리셋과 확장자들만 분석 범위에 매핑되어 동작합니다."
+                      : "Configure quick scan modes and file format filters. Selected options dictate scan analysis depth."}
+                  </p>
+
+                {/* Quick Scan Preset Selection Section */}
+                <div className="flex flex-col gap-3 bg-slate-950/70 p-4 rounded-2xl border border-white/10 shadow-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Zap size={16} className="text-amber-400 animate-pulse" />
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-100">
+                        {language === "ko" ? "Quick Scan (고속 스캔) 모드" : "Quick Scan Mode"}
+                      </span>
+                    </div>
+                    <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border shadow-sm ${
+                      quickScanMode
+                        ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 shadow-emerald-500/10"
+                        : "bg-purple-500/15 border-purple-500/40 text-purple-300 shadow-purple-500/10"
+                    }`}>
+                      {quickScanMode
+                        ? (language === "ko" ? "⚡ FAST MODE (고속 스캔 ON)" : "⚡ FAST MODE (Quick Scan)")
+                        : (language === "ko" ? "🛡️ DEEP MODE (전수 검증)" : "🛡️ DEEP MODE (Full Parity)")}
+                    </span>
+                  </div>
+
+                  {/* Visually Prominent Toggle Switch Bar */}
+                  <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900 border border-slate-800 shadow-inner">
+                    <div className="flex flex-col gap-0.5 pr-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-100">
+                          {language === "ko" ? "Quick Scan 스위치" : "Quick Scan Switch"}
+                        </span>
+                        <span className={`text-[9px] font-mono font-black uppercase px-1.5 py-0.2 rounded border ${
+                          quickScanMode ? "bg-emerald-950/60 border-emerald-500/30 text-emerald-400" : "bg-purple-950/60 border-purple-500/30 text-purple-400"
+                        }`}>
+                          {quickScanMode ? "Fast Mode" : "Deep Mode"}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        {quickScanMode
+                          ? (language === "ko" ? "무거운 비트롯 패리티 검사 생략 (최고 속도 색인)" : "Bypasses heavy bit-rot checks for ultra-fast scan speeds.")
+                          : (language === "ko" ? "모든 데이터 블록 전수 패리티 무결성 검증 개시" : "Runs full parity verification & deep bit-rot integrity checks.")}
+                      </p>
+                    </div>
+
+                    {/* Prominent Interactive Switch Button */}
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={quickScanMode}
+                      onClick={() => {
+                        const newMode = !quickScanMode;
+                        setQuickScanMode(newMode);
+                        addNotification(
+                          language === "ko"
+                            ? (newMode ? "⚡ Quick Scan: Fast Mode 활성화" : "🛡️ Quick Scan: Deep Mode 활성화")
+                            : (newMode ? "⚡ Quick Scan: Fast Mode Enabled" : "🛡️ Quick Scan: Deep Mode Enabled"),
+                          language === "ko"
+                            ? (newMode ? "무거운 비트롯 패리티 검사를 생략하고 초고속으로 색인합니다." : "모든 데이터 블록의 이중 패리티 정합성 및 비트롯 손상을 전수 검증합니다.")
+                            : (newMode ? "Heavy bit-rot checks skipped for ultra-fast scan speeds." : "Full parity verification & bit-rot integrity checks enabled."),
+                          "info"
+                        );
+                      }}
+                      className={`relative inline-flex h-8 w-16 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-all duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-400/50 ${
+                        quickScanMode
+                          ? "bg-emerald-500 shadow-lg shadow-emerald-500/30 ring-2 ring-emerald-400/30"
+                          : "bg-purple-600 shadow-lg shadow-purple-600/30 ring-2 ring-purple-400/30"
+                      }`}
+                    >
+                      <span className="sr-only">Toggle Quick Scan Mode</span>
+                      <span
+                        className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-slate-950 shadow-md ring-1 ring-white/20 transition-all duration-300 ease-in-out flex items-center justify-center text-xs font-black ${
+                          quickScanMode ? "translate-x-8 text-emerald-400" : "translate-x-0 text-purple-300"
+                        }`}
+                      >
+                        {quickScanMode ? "⚡" : "🛡️"}
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Mode Card Selector grid */}
+                  <div className="grid grid-cols-2 gap-2 mt-0.5">
+                    {/* Fast Mode Toggle Card */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQuickScanMode(true);
+                        addNotification(
+                          language === "ko" ? "Quick Scan: Fast Mode 활성화" : "Quick Scan: Fast Mode Enabled",
+                          language === "ko"
+                            ? "무거운 비트롯 패리티 검사를 생략하고 초고속으로 색인합니다."
+                            : "Heavy bit-rot checks skipped for ultra-fast scan speeds.",
+                          "info"
+                        );
+                      }}
+                      className={`p-3 rounded-xl border transition-all text-left flex flex-col justify-between gap-2 cursor-pointer ${
+                        quickScanMode
+                          ? "bg-emerald-500/15 border-emerald-500/50 text-white shadow-lg shadow-emerald-500/10 ring-1 ring-emerald-500/30"
+                          : "bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:border-white/10"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
+                          <Zap size={14} />
+                          <span>Fast Mode</span>
+                        </div>
+                        {quickScanMode && <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />}
+                      </div>
+                      <p className="text-[10px] text-slate-300 leading-tight">
+                        {language === "ko"
+                          ? "무거운 비트롯 검사 스킵으로 최상 속도 색인"
+                          : "Skips heavy bit-rot checks for max scan speed."}
+                      </p>
+                      <div className="flex items-center gap-1 text-[9px] font-mono text-emerald-300/80 bg-emerald-950/40 px-1.5 py-0.5 rounded w-max border border-emerald-500/20">
+                        <span>⚡ Skip Bit-Rot</span>
+                      </div>
+                    </button>
+
+                    {/* Deep Mode Toggle Card */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQuickScanMode(false);
+                        addNotification(
+                          language === "ko" ? "Quick Scan: Deep Mode 활성화" : "Quick Scan: Deep Mode Enabled",
+                          language === "ko"
+                            ? "모든 데이터 블록의 이중 패리티 정합성 및 비트롯 손상을 전수 검증합니다."
+                            : "Full parity verification & bit-rot integrity checks enabled.",
+                          "info"
+                        );
+                      }}
+                      className={`p-3 rounded-xl border transition-all text-left flex flex-col justify-between gap-2 cursor-pointer ${
+                        !quickScanMode
+                          ? "bg-purple-500/15 border-purple-500/50 text-white shadow-lg shadow-purple-500/10 ring-1 ring-purple-500/30"
+                          : "bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:border-white/10"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-bold text-xs text-purple-400">
+                          <ShieldCheck size={14} />
+                          <span>Deep Mode</span>
+                        </div>
+                        {!quickScanMode && <CheckCircle2 size={14} className="text-purple-400 shrink-0" />}
+                      </div>
+                      <p className="text-[10px] text-slate-300 leading-tight">
+                        {language === "ko"
+                          ? "전수 이중 패리티 무결성 및 비트롯 정밀 검증"
+                          : "Enables full parity & bit-rot verification."}
+                      </p>
+                      <div className="flex items-center gap-1 text-[9px] font-mono text-purple-300/80 bg-purple-950/40 px-1.5 py-0.5 rounded w-max border border-purple-500/20">
+                        <span>🛡️ Full Parity</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
 
                 {/* Quick presets */}
                 <div className="flex justify-between items-center bg-white/5 p-2 rounded-xl">
@@ -2674,7 +2844,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-4 overflow-y-auto max-h-80 pr-1">
+                <div className="flex flex-col gap-4">
                   {/* Images Selection Group */}
                   <div className="flex flex-col gap-1.5">
                     <div className="flex items-center justify-between">
@@ -2851,9 +3021,10 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+                </div>
 
-                {/* Footer */}
-                <div className="pt-3 border-t border-white/5 flex flex-col gap-3">
+                {/* Pinned Sticky Footer */}
+                <div className="pt-3 border-t border-white/10 flex flex-col gap-2.5 shrink-0 bg-slate-900 -mx-4 -mb-4 p-4 sm:-mx-6 sm:-mb-6 sm:p-6 rounded-b-3xl">
                   <div className="flex items-center justify-between text-xs text-slate-400">
                     <span>
                       {language === "ko"
@@ -2910,7 +3081,9 @@ export default function App() {
                     <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/50" />
                   </div>
                   <span className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em]">
-                    {modal.title}
+                    {modal.type === "organize" && language === "ko"
+                      ? "필터 및 카테고리별 파일 정리"
+                      : modal.title}
                   </span>
                   <div className="w-12" />
                 </div>
@@ -2936,7 +3109,9 @@ export default function App() {
                     </div>
                     <div>
                       <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                        {modal.title}
+                        {modal.type === "organize" && language === "ko"
+                          ? "필터 및 카테고리별 파일 정리"
+                          : modal.title}
                       </h3>
                       <div className="text-[10px] text-slate-500 font-mono">
                         ID:{" "}
@@ -2946,7 +3121,9 @@ export default function App() {
                   </div>
 
                   <p className="text-slate-400 text-xs mb-6 leading-relaxed font-medium">
-                    {modal.message}
+                    {modal.type === "organize" && language === "ko"
+                      ? "선택한 사진들을 분류 기준에 맞는 하위 폴더로 자동 구성하여 정리합니다. 원하시는 폴더 구조를 선택하세요:"
+                      : modal.message}
                   </p>
 
                   {modal.type === "report" && modal.data && (
@@ -3010,34 +3187,51 @@ export default function App() {
                       <div className="flex bg-slate-900 p-1 rounded-xl border border-white/5">
                         <button
                           onClick={() => setOrgMode("copy")}
-                          className={`flex-1 py-2 text-[9px] font-black uppercase rounded-lg transition-all ${orgMode === "copy" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-500 hover:text-slate-300"}`}
+                          className={`flex-1 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${orgMode === "copy" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-500 hover:text-slate-300"}`}
                         >
-                          Copy
+                          {language === "ko" ? "복사 방식 (안전)" : "Copy"}
                         </button>
                         <button
                           onClick={() => setOrgMode("move")}
-                          className={`flex-1 py-2 text-[9px] font-black uppercase rounded-lg transition-all ${orgMode === "move" ? "bg-rose-600 text-white shadow-lg" : "text-slate-500 hover:text-slate-300"}`}
+                          className={`flex-1 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${orgMode === "move" ? "bg-rose-600 text-white shadow-lg" : "text-slate-500 hover:text-slate-300"}`}
                         >
-                          Move
+                          {language === "ko" ? "이동 방식 (정리)" : "Move"}
                         </button>
                       </div>
-                      <div className="space-y-1.5">
-                        {modal.options.map((opt, i) => (
-                          <button
-                            key={`${opt}-${i}`}
-                            onClick={() => {
-                              modal.onConfirm?.(opt, orgMode);
-                              setModal(null);
-                            }}
-                            className="w-full text-left px-4 py-2.5 bg-slate-900 hover:bg-slate-800 border border-white/5 hover:border-indigo-500/50 rounded-xl text-white text-xs font-bold transition-all flex items-center justify-between group"
-                          >
-                            {t("organizeBy", { option: opt })}
-                            <ArrowRight
-                              size={14}
-                              className="opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0"
-                            />
-                          </button>
-                        ))}
+                      <div className="space-y-2">
+                        {modal.options.map((opt, i) => {
+                          const localizedOpt =
+                            language === "ko"
+                              ? opt === "Category"
+                                ? "카테고리(주제)별"
+                                : opt === "Year"
+                                  ? "촬영 연도/날짜별"
+                                  : opt === "Camera"
+                                    ? "카메라 기종별"
+                                    : opt === "Format"
+                                      ? "파일 포맷(확장자)별"
+                                      : opt
+                              : opt;
+                          return (
+                            <button
+                              key={`${opt}-${i}`}
+                              onClick={() => {
+                                modal.onConfirm?.(opt, orgMode);
+                                setModal(null);
+                              }}
+                              className="w-full text-left px-4 py-3 bg-slate-900/90 hover:bg-slate-800/90 border border-white/10 hover:border-indigo-500/50 rounded-xl text-white text-xs font-bold transition-all flex items-center justify-between group cursor-pointer shadow-sm"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <span className="w-2 h-2 rounded-full bg-indigo-400 group-hover:scale-125 transition-transform" />
+                                <span>{t("organizeBy", { option: localizedOpt })}</span>
+                              </div>
+                              <ArrowRight
+                                size={14}
+                                className="opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0 text-indigo-400"
+                              />
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   ) : (
@@ -3820,7 +4014,7 @@ export default function App() {
         </AnimatePresence>
 
         {/* Thumb-Friendly Mobile Bottom Navigation Bar */}
-        <div className="lg:hidden fixed bottom-3 left-3 right-3 z-40 bg-slate-950/85 backdrop-blur-xl border border-white/10 p-2.5 rounded-2xl flex justify-around items-center shadow-2xl">
+        <div className="lg:hidden fixed bottom-2 left-2 right-2 z-40 bg-slate-950/90 backdrop-blur-2xl border border-white/10 p-1.5 rounded-2xl flex justify-around items-center shadow-[0_10px_30px_rgba(0,0,0,0.8)] pb-[calc(0.375rem+env(safe-area-inset-bottom))]">
           {[
             {
               id: "dashboard",
@@ -3848,9 +4042,9 @@ export default function App() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex flex-col items-center justify-center py-2 px-2.5 rounded-xl transition-all cursor-pointer flex-1 gap-1.5 ${
+                className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-all cursor-pointer flex-1 gap-1 min-h-[44px] ${
                   isActive
-                    ? "text-white bg-indigo-600/30 font-bold border border-indigo-500/20 shadow-md"
+                    ? "text-white bg-indigo-600/30 font-bold border border-indigo-500/30 shadow-md shadow-indigo-500/10"
                     : "text-slate-400 hover:text-slate-200 border border-transparent"
                 }`}
               >
@@ -3862,7 +4056,7 @@ export default function App() {
                       : "text-slate-400"
                   }
                 />
-                <span className="text-[10px] tracking-tight truncate font-sans font-medium">
+                <span className="text-[10px] tracking-tight truncate font-sans font-medium max-w-[56px]">
                   {tab.label}
                 </span>
               </button>
@@ -3871,7 +4065,7 @@ export default function App() {
 
           <button
             onClick={() => setMobileMenuOpen(true)}
-            className="flex flex-col items-center justify-center py-2 px-2.5 rounded-xl text-slate-400 hover:text-slate-200 border border-transparent flex-1 gap-1.5 cursor-pointer"
+            className="flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-slate-400 hover:text-slate-200 border border-transparent flex-1 gap-1 cursor-pointer min-h-[44px]"
           >
             <Menu size={18} />
             <span className="text-[10px] tracking-tight font-sans font-medium">
@@ -4175,6 +4369,9 @@ export default function App() {
           onClose={() => setShowMultiplatformModal(false)}
           language={language as 'ko' | 'en'}
         />
+
+        {/* Global Floating Tooltip Engine */}
+        <GlobalTooltip />
       </div>
     </div>
   );

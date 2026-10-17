@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sparkles,
   Zap,
@@ -13,11 +13,30 @@ import {
   Search,
   CheckCircle2,
   FileCheck2,
-  AlertCircle
+  AlertCircle,
+  TrendingUp,
+  Activity,
+  Gauge,
+  FastForward
 } from 'lucide-react';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid
+} from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { useI18n } from '../i18n/context';
 import { ScanStats } from '../types';
+
+interface SpeedPoint {
+  time: string;
+  speed: number;
+  timestamp: number;
+}
 
 interface IndexingProgressHUDProps {
   scanning: boolean;
@@ -27,6 +46,7 @@ interface IndexingProgressHUDProps {
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
+  onSkipDeepScan?: () => void;
   onViewDuplicates?: () => void;
 }
 
@@ -38,10 +58,50 @@ export const IndexingProgressHUD: React.FC<IndexingProgressHUDProps> = ({
   onPause,
   onResume,
   onStop,
+  onSkipDeepScan,
   onViewDuplicates,
 }) => {
   const { language } = useI18n();
   const [isMinimized, setIsMinimized] = useState(false);
+  const [showChart, setShowChart] = useState(true);
+  const [speedHistory, setSpeedHistory] = useState<SpeedPoint[]>([]);
+
+  // Seed initial point when scan starts
+  useEffect(() => {
+    if (scanning && speedHistory.length === 0) {
+      const now = new Date();
+      const timeLabel = now.toLocaleTimeString([], { hour12: false, minute: '2-digit', second: '2-digit' });
+      setSpeedHistory([{ time: timeLabel, speed: scanStats.speed || 0, timestamp: Date.now() }]);
+    }
+  }, [scanning, scanStats.speed, speedHistory.length]);
+
+  // Maintain 60-second rolling window buffer (1 sample / second)
+  useEffect(() => {
+    if (!scanning) {
+      setSpeedHistory([]);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      if (isPaused) return;
+
+      const currentSpeed = scanStats.speed || 0;
+      const now = new Date();
+      const timeLabel = now.toLocaleTimeString([], { hour12: false, minute: '2-digit', second: '2-digit' });
+
+      setSpeedHistory((prev) => {
+        const newPoint: SpeedPoint = {
+          time: timeLabel,
+          speed: currentSpeed,
+          timestamp: Date.now(),
+        };
+        // Retain last 60 points
+        return [...prev, newPoint].slice(-60);
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [scanning, isPaused, scanStats.speed]);
 
   if (!scanning) return null;
 
@@ -51,6 +111,10 @@ export const IndexingProgressHUD: React.FC<IndexingProgressHUDProps> = ({
   const stage = scanStats.stage || 'indexing';
 
   const phaseStep = stage === 'deep_analysis' ? 3 : processed > 0 ? 2 : 1;
+
+  const currentSpeed = scanStats.speed || 0;
+  const peakSpeed = speedHistory.length > 0 ? Math.max(...speedHistory.map((p) => p.speed), currentSpeed) : currentSpeed;
+  const avgSpeed = speedHistory.length > 0 ? Math.round(speedHistory.reduce((acc, p) => acc + p.speed, 0) / speedHistory.length) : currentSpeed;
 
   const formatEta = (seconds?: number) => {
     if (!seconds || seconds <= 0) return null;
@@ -65,12 +129,28 @@ export const IndexingProgressHUD: React.FC<IndexingProgressHUDProps> = ({
   const currentEta = formatEta(scanStats.etaSeconds);
   const discoveredCount = scanStats.discoveredDuplicatesCount || 0;
   const discoveredWasteBytes = scanStats.discoveredWasteBytes || 0;
-  const discoveredWasteMB = (discoveredWasteBytes / (1024 * 1024)).toFixed(1);
 
   // Extract clean file name from path
   const currentFileName = scanStats.currentPath
     ? scanStats.currentPath.split(/[/\\]/).pop() || scanStats.currentPath
     : language === 'ko' ? '파일 준비 중...' : 'Preparing file...';
+
+  // Custom Recharts Tooltip
+  const CustomSpeedTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      const data = payload[0].payload as SpeedPoint;
+      return (
+        <div className="bg-slate-900/95 border border-emerald-500/40 px-2.5 py-1.5 rounded-xl shadow-2xl backdrop-blur-md text-[11px] font-mono flex flex-col gap-0.5 z-50">
+          <span className="text-slate-400 text-[10px]">{data.time}</span>
+          <div className="flex items-center gap-1.5 text-emerald-400 font-extrabold">
+            <Zap size={12} className="animate-pulse" />
+            <span>{data.speed} {language === 'ko' ? '개/초' : 'files/s'}</span>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
     <AnimatePresence>
@@ -79,9 +159,9 @@ export const IndexingProgressHUD: React.FC<IndexingProgressHUDProps> = ({
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 40, scale: 0.95 }}
         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-        className="fixed bottom-20 lg:bottom-6 left-3 right-3 sm:left-auto sm:right-6 sm:max-w-xl z-50 pointer-events-auto"
+        className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] lg:bottom-6 left-2 right-2 sm:left-auto sm:right-6 sm:max-w-xl z-50 pointer-events-auto"
       >
-        <div className="relative overflow-hidden rounded-3xl bg-slate-950/95 border border-indigo-500/40 shadow-[0_12px_40px_rgba(0,0,0,0.8),0_0_20px_rgba(99,102,241,0.25)] backdrop-blur-2xl text-white">
+        <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl bg-slate-950/95 border border-indigo-500/40 shadow-[0_12px_40px_rgba(0,0,0,0.8),0_0_20px_rgba(99,102,241,0.25)] backdrop-blur-2xl text-white">
           {/* Animated Ambient Scanning Glow & Laser Line */}
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute -top-24 -left-24 w-48 h-48 bg-indigo-500/20 rounded-full blur-3xl" />
@@ -129,6 +209,15 @@ export const IndexingProgressHUD: React.FC<IndexingProgressHUDProps> = ({
               </div>
 
               <div className="flex items-center gap-1.5 shrink-0">
+                {stage === 'deep_analysis' && onSkipDeepScan && (
+                  <button
+                    onClick={onSkipDeepScan}
+                    className="p-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg transition-all cursor-pointer"
+                    title={language === 'ko' ? 'AI 정밀분석 건너뛰기' : 'Skip AI Deep Scan'}
+                  >
+                    <FastForward size={14} fill="currentColor" />
+                  </button>
+                )}
                 {isPaused ? (
                   <button
                     onClick={onResume}
@@ -200,6 +289,16 @@ export const IndexingProgressHUD: React.FC<IndexingProgressHUDProps> = ({
 
                 {/* HUD Controls */}
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {stage === 'deep_analysis' && onSkipDeepScan && (
+                    <button
+                      onClick={onSkipDeepScan}
+                      className="flex items-center gap-1 px-2.5 py-1.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs active:scale-95"
+                      title={language === 'ko' ? 'AI 정밀분석 건너뛰고 바로 완료' : 'Skip AI Deep Scan & Complete'}
+                    >
+                      <FastForward size={12} fill="currentColor" />
+                      <span className="hidden sm:inline">{language === 'ko' ? '정밀 건너뛰기' : 'Skip AI'}</span>
+                    </button>
+                  )}
                   {isPaused ? (
                     <button
                       onClick={onResume}
@@ -259,6 +358,32 @@ export const IndexingProgressHUD: React.FC<IndexingProgressHUDProps> = ({
                 </div>
               </div>
 
+              {/* Skip Deep Analysis Callout Card */}
+              {stage === 'deep_analysis' && onSkipDeepScan && (
+                <div className="flex items-center justify-between gap-2.5 p-2.5 sm:p-3 rounded-xl bg-gradient-to-r from-amber-950/50 via-slate-900/80 to-amber-950/40 border border-amber-500/40 shadow-inner">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-300 shrink-0">
+                      <Zap size={14} className="animate-pulse" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-amber-200 truncate">
+                        {language === 'ko' ? '정밀 분석 시간이 오래 걸리나요?' : 'AI Deep Scan taking too long?'}
+                      </p>
+                      <p className="text-[10px] sm:text-[11px] text-slate-300 truncate">
+                        {language === 'ko' ? '건너뛰어도 고속 해시로 중복 파일은 100% 탐지됩니다.' : 'Fast hash duplicate detection remains 100% accurate.'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={onSkipDeepScan}
+                    className="shrink-0 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-xl text-xs transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <FastForward size={12} fill="currentColor" />
+                    <span>{language === 'ko' ? '건너뛰고 즉시 완료' : 'Skip & Finish'}</span>
+                  </button>
+                </div>
+              )}
+
               {/* Progress Bar with Laser Ripple */}
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between text-xs font-mono font-bold">
@@ -294,6 +419,93 @@ export const IndexingProgressHUD: React.FC<IndexingProgressHUDProps> = ({
                     style={{ width: `${percentage}%` }}
                   />
                 </div>
+              </div>
+
+              {/* Real-time Velocity Line Chart (Recharts) */}
+              <div className="flex flex-col gap-2 bg-slate-900/90 p-3 rounded-2xl border border-white/10 shadow-inner">
+                {/* Header bar with stats */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <TrendingUp size={13} className="text-emerald-400 animate-pulse" />
+                    <span className="text-[11px] font-black uppercase tracking-wider text-slate-200">
+                      {language === 'ko' ? '실시간 스캔 속도 트렌드 (최근 60초)' : 'Scan Speed Velocity (Last 60s)'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-[10px] font-mono">
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold">
+                      {language === 'ko' ? '현재' : 'Now'}: {currentSpeed} {language === 'ko' ? '개/초' : 'f/s'}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300">
+                      {language === 'ko' ? '최고' : 'Peak'}: {peakSpeed} {language === 'ko' ? '개/초' : 'f/s'}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 hidden sm:inline">
+                      {language === 'ko' ? '평균' : 'Avg'}: {avgSpeed} {language === 'ko' ? '개/초' : 'f/s'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowChart(!showChart)}
+                      className="p-1 rounded bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all cursor-pointer ml-1"
+                      title={language === 'ko' ? '차트 접기/펼치기' : 'Toggle Chart'}
+                    >
+                      {showChart ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Chart Area */}
+                {showChart && (
+                  <div className="w-full h-28 pt-1">
+                    {speedHistory.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart
+                          data={speedHistory}
+                          margin={{ top: 5, right: 5, left: -25, bottom: 0 }}
+                        >
+                          <defs>
+                            <linearGradient id="speedGlow" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
+                              <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.06)" vertical={false} />
+                          <XAxis
+                            dataKey="time"
+                            stroke="#64748b"
+                            tick={{ fill: '#64748b', fontSize: 9, fontFamily: 'monospace' }}
+                            tickLine={false}
+                            minTickGap={20}
+                            axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+                          />
+                          <YAxis
+                            stroke="#64748b"
+                            tick={{ fill: '#64748b', fontSize: 9, fontFamily: 'monospace' }}
+                            tickLine={false}
+                            axisLine={false}
+                            allowDecimals={false}
+                          />
+                          <Tooltip content={<CustomSpeedTooltip />} />
+                          <Area
+                            type="monotone"
+                            dataKey="speed"
+                            stroke="#10b981"
+                            strokeWidth={2}
+                            fillOpacity={1}
+                            fill="url(#speedGlow)"
+                            isAnimationActive={false}
+                            dot={false}
+                            activeDot={{ r: 4, fill: '#34d399', stroke: '#064e3b', strokeWidth: 2 }}
+                          />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-500 font-mono">
+                        <Activity size={12} className="animate-spin mr-1 text-emerald-400" />
+                        {language === 'ko' ? '속도 데이터 수집 중...' : 'Collecting speed metrics...'}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Live File Ticker & Duplicate Discoveries */}

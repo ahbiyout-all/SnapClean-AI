@@ -34,6 +34,55 @@
   @apply backdrop-blur-md bg-white/5 border border-white/10;
 }
 
+/* Mobile GPU Fill-Rate & Paint Optimizer (Item 3)
+ * On mobile viewports or coarse-pointer touch devices, backdrop-filter: blur() causes 
+ * severe fill-rate bottlenecks and frame drops. Replace with optimized translucent solids.
+ */
+@media (max-width: 768px), (pointer: coarse) {
+  .glass {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background-color: rgba(15, 23, 42, 0.94) !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background-color: rgb(15, 23, 42) !important;
+  }
+}
+
+/* CSS Content-Visibility Auto Acceleration
+ * Skips layout and paint computation for offscreen cards, boosting scroll speed to 60fps.
+ */
+.cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
+}
+
+.cv-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+}
+
+.cv-group {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 380px;
+}
+
+.cv-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 54px;
+}
+
+.gpu-accelerated {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: transform;
+}
+
 .gradient-text {
   @apply bg-clip-text text-transparent bg-linear-to-r from-blue-400 to-indigo-400;
 }
@@ -69,4 +118,5 @@
   background-color: rgba(255, 255, 255, 0.05) !important;
   color: #ffffff !important;
 }
+
 

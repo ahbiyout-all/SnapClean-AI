@@ -7,10 +7,12 @@ import { fileURLToPath } from "url";
 import chokidar from "chokidar";
 import fs from "fs-extra";
 import { exec } from "child_process";
+import { GoogleGenAI, Type } from "@google/genai";
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: "50mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
     cors: {
@@ -39,9 +41,240 @@ async function startServer() {
     res.sendFile(path.join(publicDir, "sw.js"));
   });
 
+  // Helper for Gemini AI instance
+  function getGeminiClient(customApiKey?: string) {
+    const apiKey = customApiKey || process.env.GEMINI_API_KEY || "";
+    return new GoogleGenAI({
+      apiKey: apiKey || undefined,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+  }
+
   // --- API Routes ---
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", message: "Snapshot AI Server is running" });
+  });
+
+  app.get("/api/ai/status", (req, res) => {
+    const isConfigured = !!process.env.GEMINI_API_KEY;
+    res.json({ configured: isConfigured });
+  });
+
+  // AI Route: Event Summary
+  app.post("/api/ai/event-summary", async (req, res) => {
+    const { tags = [], customApiKey } = req.body || {};
+    const effectiveKey = customApiKey || (req.headers["x-custom-api-key"] as string) || process.env.GEMINI_API_KEY;
+    
+    if (!effectiveKey) {
+      return res.json({
+        success: false,
+        fallback: {
+          title: "Memories in the Making",
+          story: "A collection of moments captured and preserved for the future.",
+          mood: "Sentimental"
+        }
+      });
+    }
+
+    try {
+      const client = getGeminiClient(effectiveKey);
+      const prompt = `Given these photo tags from an event: ${Array.isArray(tags) ? tags.join(", ") : String(tags)}, 
+      generate a creative, short event title and a 2-sentence emotional story summary. 
+      Also provide a one-word mood.`;
+
+      const response = await client.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              story: { type: Type.STRING },
+              mood: { type: Type.STRING }
+            },
+            required: ["title", "story", "mood"]
+          }
+        }
+      });
+
+      const parsed = JSON.parse(response.text || "{}");
+      return res.json({ success: true, data: parsed });
+    } catch (_err) {
+      return res.json({
+        success: false,
+        fallback: {
+          title: "Captured Moments",
+          story: "A visual compilation of cherished memories.",
+          mood: "Nostalgic"
+        }
+      });
+    }
+  });
+
+  // AI Route: Photo Analysis
+  app.post("/api/ai/analyze-photo", async (req, res) => {
+    const { photoPath, imageData, customApiKey } = req.body || {};
+    const effectiveKey = customApiKey || (req.headers["x-custom-api-key"] as string) || process.env.GEMINI_API_KEY;
+
+    if (!effectiveKey) {
+      return res.json({
+        success: false,
+        fallback: {
+          aestheticScore: 7.8,
+          tags: ["Photography", "Analyzed", "Visual Asset"],
+          description: "Photo indexed and organized securely.",
+          category: "Personal"
+        }
+      });
+    }
+
+    try {
+      const client = getGeminiClient(effectiveKey);
+      const contents: any[] = [];
+      
+      if (imageData) {
+        // Strip data:image/jpeg;base64, prefix if present
+        const cleanBase64 = imageData.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
+        contents.push({
+          inlineData: {
+            mimeType: "image/jpeg",
+            data: cleanBase64
+          }
+        });
+      }
+
+      contents.push({
+        text: `Analyze this photo ${photoPath ? `(path: ${photoPath})` : ''}. 
+        Provide a detailed aesthetic score (0-10), 5 descriptive tags, 
+        a one-sentence description, categorize it (e.g. Travel, Family, Work, Art, Nature),
+        and extract ANY visible text in the image (especially if it's a receipt, document, or sign).`
+      });
+
+      const response = await client.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: { parts: contents },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              aestheticScore: { type: Type.NUMBER },
+              tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+              description: { type: Type.STRING },
+              category: { type: Type.STRING },
+              ocrText: { type: Type.STRING }
+            },
+            required: ["aestheticScore", "tags", "description", "category"]
+          }
+        }
+      });
+
+      const parsed = JSON.parse(response.text || "{}");
+      return res.json({ success: true, data: parsed });
+    } catch (_err) {
+      return res.json({
+        success: false,
+        fallback: {
+          aestheticScore: 7.5,
+          tags: ["Photography", "Analyzed", "Local Fallback"],
+          description: "A photo from your library that requested AI tagging.",
+          category: "Personal"
+        }
+      });
+    }
+  });
+
+  // AI Route: Smart Search Query Expansion
+  app.post("/api/ai/smart-query", async (req, res) => {
+    const { query = "", customApiKey } = req.body || {};
+    const effectiveKey = customApiKey || (req.headers["x-custom-api-key"] as string) || process.env.GEMINI_API_KEY;
+
+    if (!effectiveKey) {
+      return res.json({
+        success: false,
+        fallback: {
+          keywords: [query],
+          intent: "keyword_fallback"
+        }
+      });
+    }
+
+    try {
+      const client = getGeminiClient(effectiveKey);
+      const prompt = `Interpret this photo library search query. It might be in any language (e.g. Korean, Japanese, French). 
+      Translate it to English keywords if needed. Extract conceptual keywords and filters.
+      Query: "${query}"`;
+
+      const response = await client.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
+              intent: { type: Type.STRING },
+              suggestedFilters: {
+                type: Type.OBJECT,
+                properties: {
+                  category: { type: Type.STRING },
+                  minQuality: { type: Type.NUMBER }
+                }
+              }
+            },
+            required: ["keywords", "intent"]
+          }
+        }
+      });
+
+      const parsed = JSON.parse(response.text || "{}");
+      return res.json({ success: true, data: parsed });
+    } catch (_err) {
+      return res.json({
+        success: false,
+        fallback: {
+          keywords: [query],
+          intent: "keyword_fallback"
+        }
+      });
+    }
+  });
+
+  // AI Route: Detect People in Batch
+  app.post("/api/ai/detect-people", async (req, res) => {
+    const { photos = [], customApiKey } = req.body || {};
+    const effectiveKey = customApiKey || (req.headers["x-custom-api-key"] as string) || process.env.GEMINI_API_KEY;
+
+    if (!effectiveKey) {
+      return res.json({ success: false, fallback: {} });
+    }
+
+    try {
+      const client = getGeminiClient(effectiveKey);
+      const prompt = `Analyze these photos and cluster the people appearing in them. For each person detected across the photos, provide a unique identifier (e.g., "Person A", "Person B") and a list of the photo IDs that contain this person.
+      Photos: ${JSON.stringify(photos.map((p: any) => ({ id: p.id, path: p.path })))}. 
+      Return as a JSON object where keys are person names, and values are arrays of photo IDs.`;
+
+      const response = await client.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const parsed = JSON.parse(response.text || "{}");
+      return res.json({ success: true, data: parsed });
+    } catch (_err) {
+      return res.json({ success: false, fallback: {} });
+    }
   });
 
   // Multiplatform Mobile & Desktop Downloads

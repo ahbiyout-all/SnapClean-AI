@@ -242,7 +242,7 @@ print('IPA archive packaged successfully.')
 
   const mobileConfigUuid = crypto.randomUUID().toUpperCase();
   const payloadUuid = crypto.randomUUID().toUpperCase();
-  const webAppUrl = 'https://AhBiYout.github.io/SnapClean-AI/';
+  const webAppUrl = 'https://AhBiYout-all.github.io/SnapClean-AI/';
 
   const mobileConfigXml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -286,7 +286,7 @@ ${iconBase64}
     <key>PayloadIdentifier</key>
     <string>${appId}.profile</string>
     <key>PayloadOrganization</key>
-    <string>SnapClean AI Team (AhBiYout)</string>
+    <string>SnapClean AI Team (AhBiYout-all)</string>
     <key>PayloadRemovalDisallowed</key>
     <false/>
     <key>PayloadType</key>
@@ -314,7 +314,7 @@ ${iconBase64}
                     <key>kind</key>
                     <string>software-package</string>
                     <key>url</key>
-                    <string>https://github.com/AhBiYout/AhBiYout-all/releases/download/v${version}/${ipaFileName}</string>
+                    <string>https://github.com/AhBiYout-all/SnapClean-AI/releases/download/v${version}/${ipaFileName}</string>
                 </dict>
                 <dict>
                     <key>kind</key>

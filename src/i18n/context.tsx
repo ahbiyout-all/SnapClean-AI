@@ -4,7 +4,7 @@ import { translations, Language, TranslationKey } from './translations';
 interface I18nContextType {
   language: Language;
   setLanguage: (lang: Language) => void;
-  t: (key: TranslationKey) => string;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
 const I18nContext = createContext<I18nContextType | undefined>(undefined);
@@ -21,8 +21,14 @@ export const I18nProvider = ({ children }: { children: ReactNode }) => {
     localStorage.setItem('snapclean_lang', lang);
   };
 
-  const t = (key: TranslationKey): string => {
-    return translations[language][key] || translations.en[key] || key;
+  const t = (key: TranslationKey, params?: Record<string, string | number>): string => {
+    let str = translations[language]?.[key] || translations.en?.[key] || key;
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        str = str.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), String(v));
+      });
+    }
+    return str;
   };
 
   return (
