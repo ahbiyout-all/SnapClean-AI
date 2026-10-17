@@ -41,18 +41,18 @@ pub fn compute_phash_rust(rgb_data: &[u8], width: u32, height: u32) -> String {
     }
 
     // 8x8 block average calculation
-    let block_w = 4;
-    let block_h = 4;
+    let block_w: usize = 4;
+    let block_h: usize = 4;
     let mut grid = [0.0f32; 64];
 
-    for gy in 0..8 {
-        for gx in 0..8 {
+    for gy in 0usize..8 {
+        for gx in 0usize..8 {
             let mut sum = 0.0f32;
             let mut count = 0;
-            for y in 0..block_h {
-                for x in 0..block_w {
-                    let px = gx * block_w + x;
-                    let py = gy * block_h + y;
+            for y in 0usize..block_h {
+                for x in 0usize..block_w {
+                    let px = (gx * block_w + x) as u32;
+                    let py = (gy * block_h + y) as u32;
                     let idx = ((py * width + px) * 4) as usize;
                     if idx + 2 < rgb_data.len() {
                         let r = rgb_data[idx] as f32;
@@ -71,8 +71,8 @@ pub fn compute_phash_rust(rgb_data: &[u8], width: u32, height: u32) -> String {
 
     // Compute 64-bit difference hash (dHash horizontal gradient)
     let mut hash_u64: u64 = 0;
-    for row in 0..8 {
-        for col in 0..8 {
+    for row in 0usize..8 {
+        for col in 0usize..8 {
             let next_col = (col + 1) % 8;
             let bit = if grid[row * 8 + col] > grid[row * 8 + next_col] { 1 } else { 0 };
             hash_u64 = (hash_u64 << 1) | (bit as u64);

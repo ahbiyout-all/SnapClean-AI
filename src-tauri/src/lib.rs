@@ -679,10 +679,10 @@ fn find_duplicates_native(entries: Vec<HashEntry>, threshold: u32) -> Result<Vec
     let mut visited = std::collections::HashSet::new();
 
     // Pre-decode all hashes to avoid redundant decoding during O(N^2) comparison
-    let decoded_entries: Vec<(String, image_hasher::ImageHash)> = entries
+    let decoded_entries: Vec<(String, image_hasher::ImageHash<Box<[u8]>>)> = entries
         .into_iter()
         .filter_map(|e| {
-            image_hasher::ImageHash::from_base64(&e.pHash)
+            image_hasher::ImageHash::<Box<[u8]>>::from_base64(&e.pHash)
                 .ok()
                 .map(|h| (e.id, h))
         })
@@ -1257,11 +1257,11 @@ pub extern "C" fn snapclean_compare_phash(
         Err(_) => return -1,
     };
 
-    let h1 = match image_hasher::ImageHash::from_base64(str1) {
+    let h1: image_hasher::ImageHash<Box<[u8]>> = match image_hasher::ImageHash::from_base64(str1) {
         Ok(h) => h,
         Err(_) => return -2,
     };
-    let h2 = match image_hasher::ImageHash::from_base64(str2) {
+    let h2: image_hasher::ImageHash<Box<[u8]>> = match image_hasher::ImageHash::from_base64(str2) {
         Ok(h) => h,
         Err(_) => return -2,
     };
@@ -1287,9 +1287,9 @@ pub extern "C" fn snapclean_batch_compare_phash(
     };
 
     let items: Vec<&str> = csv_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-    let parsed_hashes: Vec<Option<image_hasher::ImageHash>> = items
+    let parsed_hashes: Vec<Option<image_hasher::ImageHash<Box<[u8]>>>> = items
         .iter()
-        .map(|s| image_hasher::ImageHash::from_base64(s).ok())
+        .map(|s| image_hasher::ImageHash::<Box<[u8]>>::from_base64(s).ok())
         .collect();
 
     let mut matches = Vec::new();
@@ -1447,7 +1447,7 @@ pub extern "C" fn snapclean_vault_encrypt_buffer(
     let mut hasher = Sha256::new();
     hasher.update(k_slice);
     hasher.update(&iv);
-    let mut round_key = hasher.finalize();
+    let round_key = hasher.finalize();
 
     for i in 0..input_len {
         let k_byte = round_key[i % 32];
