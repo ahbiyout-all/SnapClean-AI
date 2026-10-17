@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use js-sys::{Uint8Array, Array};
+use js_sys::{Uint8Array, Array};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
