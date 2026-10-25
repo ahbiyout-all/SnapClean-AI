@@ -5,7 +5,10 @@ import {
   Cpu, 
   ShieldCheck, 
   PieChart, 
-  RefreshCw 
+  RefreshCw,
+  BookOpen,
+  Sparkles,
+  ArrowRight
 } from 'lucide-react';
 import { PhotoRecord } from '../../services/db';
 import { DedupeGroup } from '../../services/dedupeEngine';
@@ -33,6 +36,7 @@ interface DashboardTabProps {
   deleteFromDisk?: (photos: PhotoRecord[]) => Promise<void>;
   detectDuplicates?: () => Promise<void>;
   addNotification?: (title: string, message: string, type?: 'info' | 'success' | 'warning') => void;
+  onOpenPhotobook?: () => void;
 }
 
 export const DashboardTab = ({
@@ -44,6 +48,7 @@ export const DashboardTab = ({
   categoryStats,
   formatStats,
   dateStats,
+  onOpenPhotobook,
 }: DashboardTabProps) => {
   const { t } = useI18n();
 
@@ -57,6 +62,38 @@ export const DashboardTab = ({
         <StatCard icon={Trash2} label={t('wasteDetected')} value={`${(totalWaste / 1024 / 1024).toFixed(1)} MB`} subtext={`${groups.length} ${t('photosCount')}`} />
         <StatCard icon={Cpu} label={t('hardwareAcceleration')} value={t('active')} subtext="8 Threads" />
         <StatCard icon={ShieldCheck} label={t('privacyBarrier')} value={t('onDevice')} subtext={t('noCloud')} />
+      </div>
+
+      {/* 📖 New Feature: 3D Digital Photobook Quick Launcher Banner */}
+      <div className="relative overflow-hidden rounded-3xl bg-linear-to-r from-indigo-950/80 via-slate-900 to-amber-950/50 border border-indigo-500/30 p-6 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300 shrink-0 shadow-xl shadow-amber-500/10">
+            <BookOpen size={28} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                <Sparkles size={11} /> NEW FEATURE
+              </span>
+              <h3 className="text-white font-bold text-base md:text-lg">
+                인터랙티브 3D 디지털 사진첩 (Digital Photobook)
+              </h3>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed max-w-xl">
+              정리 완료된 고화질 베스트 컷들로 책장을 직접 넘기는 3D 플립북을 생성하세요. 클래식 양장본, 모던 매거진, 빈티지 필름 테마와 감성 앰비언스 사운드를 지원합니다.
+            </p>
+          </div>
+        </div>
+
+        {onOpenPhotobook && (
+          <button
+            onClick={onOpenPhotobook}
+            className="px-5 py-3 rounded-2xl bg-linear-to-r from-amber-500 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-slate-950 font-black text-xs transition-all shadow-xl shadow-indigo-600/30 flex items-center justify-center gap-2 shrink-0 cursor-pointer group"
+          >
+            <span>사진첩 서재 열기</span>
+            <ArrowRight size={15} className="group-hover:translate-x-1 transition-transform" />
+          </button>
+        )}
       </div>
 
       {/* Real-time VRAM & CPU Engine-Core Telemetry & High-Load Task Optimizer */}

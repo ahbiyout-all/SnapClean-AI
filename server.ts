@@ -277,6 +277,116 @@ async function startServer() {
     }
   });
 
+  // AI Route: Photobook Emotional Story Generation with 4 Tonal Styles
+  app.post("/api/ai/photobook-story", async (req, res) => {
+    const { title = "", theme = "", storyTone = "lyrical", photoDetails = [], customApiKey } = req.body || {};
+    const effectiveKey = customApiKey || (req.headers["x-custom-api-key"] as string) || process.env.GEMINI_API_KEY;
+
+    const toneGuide: Record<string, string> = {
+      lyrical: "시적이고 아련한 서정적 감성 (여운과 계절감, 그리움, 찰나의 아름다움 강조)",
+      travel: "생생하고 모험적인 여행 탐험기 (낯선 풍경, 골목의 설렘, 새로운 발견, 자유로움 강조)",
+      family: "따뜻하고 뭉클한 가족/연인 일기 (함께한 온기, 소박한 행복, 미소, 영원한 유대감 강조)",
+      minimal: "세련되고 정제된 모더니즘 에디토리얼 (여백의 미, 간결하고 깊이 있는 문장, 빛과 구도 중심)"
+    };
+
+    const selectedGuide = toneGuide[storyTone] || toneGuide.lyrical;
+
+    const fallbackStory = {
+      curatedTitle: title || (storyTone === 'travel' ? "낯선 바람이 머문 길목" : storyTone === 'family' ? "함께여서 눈부신 날들" : storyTone === 'minimal' ? "빛과 침묵의 시간" : "빛나는 시간의 조각들"),
+      curatedSubtitle: storyTone === 'travel' ? "지도 밖으로 떠난 우리들의 잊지 못할 기록" : storyTone === 'family' ? "서로의 미소로 채워진 소중한 가족 앨범" : storyTone === 'minimal' ? "정제된 프레임 속에 담아낸 찰나의 순간" : "기억 속에 영원히 머무를 소중한 순간의 아카이브",
+      chapters: [
+        {
+          chapterTitle: storyTone === 'travel' ? "출발의 설렘" : storyTone === 'family' ? "소소한 아침의 풍경" : "설레는 첫 걸음",
+          storyNote: "새로운 빛과 풍경이 우리를 맞이하던 날, 카메라 렌즈 너머로 번지던 따스한 미소들.",
+          accentQuote: "우리가 기억하는 것은 날들이 아니라 순간들이다."
+        },
+        {
+          chapterTitle: storyTone === 'travel' ? "발길 닿는 대로" : storyTone === 'family' ? "함께 웃던 오후" : "함께 머물던 자리",
+          storyNote: "바람이 불어오고 햇살이 어깨를 감싸 안을 때, 시간은 우리 곁에 잠시 멈춰 섰습니다.",
+          accentQuote: "사진은 침묵 속에서 가장 깊은 사랑을 말한다."
+        }
+      ],
+      epilogue: "수많은 순간 속에서 찾아낸 가장 아름다운 보석 같은 기억들을 이 책에 담아둡니다."
+    };
+
+    if (!effectiveKey) {
+      return res.json({ success: false, fallback: fallbackStory });
+    }
+
+    try {
+      const client = getGeminiClient(effectiveKey);
+      const prompt = `당신은 세계적인 감성 사진집(Photobook) 수석 에디터입니다.
+아래 사진 목록 메타데이터를 정밀 분석하여, 지정된 문학적 톤앤매너로 디지털 사진첩 텍스트를 완성해 주세요.
+
+[요청 톤앤매너]: ${selectedGuide}
+[사진첩 테마]: ${theme}
+[기존 제목 후보]: ${title || "미정"}
+
+[사진 메타데이터 목록]:
+${JSON.stringify(photoDetails, null, 2)}
+
+다음 JSON 규격으로만 응답하세요:
+{
+  "curatedTitle": "감성적이고 세련된 사진첩 메인 제목 (한국어, 15자 내외)",
+  "curatedSubtitle": "톤앤매너에 어울리는 서정적 부제 한 줄 (20자 내외)",
+  "chapters": [
+    {
+      "chapterTitle": "챕터 제목 (예: 1장. 노을빛이 번지던 오후)",
+      "storyNote": "이 챕터 사진들의 정서를 관통하는 2~3줄의 문학적 에세이 글귀",
+      "accentQuote": "짧은 시적 영감 한마디 (10자 내외)"
+    }
+  ],
+  "epilogue": "책 뒷표지에 실릴 마음을 울리는 마무리 에필로그"
+}`;
+
+      const response = await client.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const parsed = JSON.parse(response.text || "{}");
+      return res.json({ success: true, data: parsed });
+    } catch (_err) {
+      return res.json({ success: false, fallback: fallbackStory });
+    }
+  });
+
+  // AI Route: Single Photo Caption AI Rewriter
+  app.post("/api/ai/photobook-caption-rewrite", async (req, res) => {
+    const { photoContext = {}, storyTone = "lyrical", customApiKey } = req.body || {};
+    const effectiveKey = customApiKey || (req.headers["x-custom-api-key"] as string) || process.env.GEMINI_API_KEY;
+
+    const fallbackCaption = "마음 깊이 오래도록 간직하고픈 아름다운 한 컷";
+
+    if (!effectiveKey) {
+      return res.json({ success: false, fallback: fallbackCaption, data: { caption: fallbackCaption } });
+    }
+
+    try {
+      const client = getGeminiClient(effectiveKey);
+      const prompt = `사진 메타데이터와 지정된 톤앤매너를 반영하여 사진집에 어울리는 감성적인 한 줄 캡션을 15~25자 내외로 작성해 주세요.
+사진 정보: ${JSON.stringify(photoContext)}
+톤앤매너: ${storyTone} (lyrical: 서정적 감성, travel: 생생한 여행기, family: 따뜻한 가족일기, minimal: 담백한 미니멀)
+반드시 JSON 형식 {"caption": "작성된 캡션"} 으로만 응답하세요.`;
+
+      const response = await client.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const parsed = JSON.parse(response.text || "{}");
+      return res.json({ success: true, data: parsed });
+    } catch (_err) {
+      return res.json({ success: false, fallback: fallbackCaption, data: { caption: fallbackCaption } });
+    }
+  });
+
   // Multiplatform Mobile & Desktop Downloads
   app.get("/api/download/:artifact", async (req, res) => {
     const { artifact } = req.params;

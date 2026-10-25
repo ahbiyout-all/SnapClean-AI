@@ -72,10 +72,13 @@ export interface EventRecord {
   coverStyle?: string;
 }
 
+import { PhotobookRecord } from '../types';
+
 export class SnapCleanDB extends Dexie {
   photos!: Table<PhotoRecord>;
   auditLogs!: Table<AuditLog>;
   events!: Table<EventRecord>;
+  photobooks!: Table<PhotobookRecord>;
 
   constructor() {
     super('SnapCleanAI_DB');
@@ -102,6 +105,12 @@ export class SnapCleanDB extends Dexie {
       photos: '++id, originalId, path, size, md5, pHash, sparseHash, status, isPrivate, isDeleted, eventId, category, aestheticScore',
       auditLogs: '++id, action, timestamp',
       events: 'id, title, startDate, endDate'
+    });
+    this.version(7).stores({
+      photos: '++id, originalId, path, size, md5, pHash, sparseHash, status, isPrivate, isDeleted, eventId, category, aestheticScore',
+      auditLogs: '++id, action, timestamp',
+      events: 'id, title, startDate, endDate',
+      photobooks: 'id, title, theme, createdAt, updatedAt'
     });
   }
 }

@@ -38,6 +38,7 @@ import {
   CheckSquare,
   Square,
   Sparkle,
+  BookOpen,
 } from "lucide-react";
 import { DedupeGroup } from "../../services/dedupeEngine";
 import { useI18n } from "../../i18n/context";
@@ -95,11 +96,13 @@ interface DuplicatesTabProps {
   dedupeOptions?: DedupeOptions;
   setDedupeOptions?: React.Dispatch<React.SetStateAction<DedupeOptions>>;
   onRescanDuplicates?: (opts?: Partial<DedupeOptions>) => Promise<void>;
+  onCreatePhotobook?: () => void;
 }
 
 export const DuplicatesTab = ({
   type = "exact",
   sortedGroups,
+  onCreatePhotobook,
   autoResolveRule,
   setAutoResolveRule,
   dupSortBy,
@@ -433,6 +436,39 @@ export const DuplicatesTab = ({
 
   return (
     <div className="space-y-6">
+      {/* 📖 디지털 사진첩(Photobook) 진화 연계 배너 */}
+      <div className="relative overflow-hidden rounded-2xl bg-linear-to-r from-amber-950/60 via-indigo-950/70 to-slate-900 border border-amber-500/30 p-4 sm:p-5 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300 shrink-0 shadow-lg shadow-amber-500/10">
+            <BookOpen size={24} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                {language === "ko" ? "디지털 사진첩 연계" : "Photobook Bridge"}
+              </span>
+              <h4 className="text-white font-bold text-sm sm:text-base">
+                {language === "ko" ? "정리 완료 후 베스트 컷으로 디지털 사진첩 제작" : "Turn Kept Best Shots into a 3D Photobook"}
+              </h4>
+            </div>
+            <p className="text-xs text-slate-300 mt-1">
+              {language === "ko"
+                ? "중복 사진을 정리하고 남은 최고의 고화질 컷들을 실제 책장을 넘기는 인터랙티브 3D 플립북으로 자동 제작합니다."
+                : "Bind your preserved clean photos into an interactive 3D flipbook album with realistic page turn physics."}
+            </p>
+          </div>
+        </div>
+        {onCreatePhotobook && (
+          <button
+            onClick={onCreatePhotobook}
+            className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition-all shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+          >
+            <Sparkles size={15} />
+            <span>{language === "ko" ? "베스트 컷으로 사진첩 제작하기" : "Create 3D Photobook"}</span>
+          </button>
+        )}
+      </div>
+
       {/* 4대 동작원리 안내 카드 (툴팁 기반 모듈) */}
       <div className="bg-slate-900/90 border border-indigo-500/30 rounded-2xl p-3.5 sm:p-4 text-xs sm:text-sm text-slate-300 shadow-xl backdrop-blur-md">
         <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-white/10">

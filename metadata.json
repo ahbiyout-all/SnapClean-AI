@@ -1,6 +1,6 @@
 {
   "name": "SnapClean AI",
-  "description": "Enterprise-grade AI photo management dashboard specializing in duplicate detection and intelligent categorization for massive libraries.",
+  "description": "스마트한 AI 중복 사진 정리 및 인터랙티브 3D 디지털 사진첩 제작 대시보드 - Intelligent duplicate detection and interactive 3D digital photobook generator.",
   "requestFramePermissions": [
     "camera",
     "microphone"
@@ -9,7 +9,8 @@
     "AI-powered image analysis",
     "Duplicate detection UI",
     "Large-scale library management",
+    "Interactive 3D digital photobook generator",
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ],
-  "version": "2.4.0"
+  "version": "2.5.0"
 }

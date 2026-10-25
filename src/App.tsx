@@ -98,6 +98,7 @@ import {
   Music,
   Film,
   ExternalLink,
+  BookOpen,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -118,6 +119,7 @@ import { AuditTab } from "./components/tabs/AuditTab";
 import { TrashTab } from "./components/tabs/TrashTab";
 import { DashboardTab } from "./components/tabs/DashboardTab";
 import { DuplicatesTab } from "./components/tabs/DuplicatesTab";
+import { PhotobookTab } from "./components/tabs/PhotobookTab";
 import { LibraryTab } from "./components/tabs/LibraryTab";
 import { PeopleTab } from "./components/tabs/PeopleTab";
 import { useScanner } from "./hooks/useScanner";
@@ -145,7 +147,7 @@ import { GlobalTooltip } from "./components/GlobalTooltip";
 
 // Components
 export default function App() {
-  const [activeTab, setActiveTab] = useState("dashboard");
+  const [activeTab, setActiveTab] = useState("duplicates");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showScanSourceModal, setShowScanSourceModal] = useState(false);
   const [showMultiplatformModal, setShowMultiplatformModal] = useState(false);
@@ -163,52 +165,36 @@ export default function App() {
 
   const { isConfigured: isAiConfigured } = useAiApiKey();
 
-  // If AI key is removed while on an AI-only tab, redirect to dashboard
+  // If AI key is removed while on an AI-only tab, redirect to duplicates
   useEffect(() => {
     if (!isAiConfigured && (activeTab === "people" || activeTab === "memories" || activeTab === "enhancement")) {
-      setActiveTab("dashboard");
+      setActiveTab("duplicates");
     }
   }, [isAiConfigured, activeTab]);
 
+  // Minimal 3 core menus: 중복 정리, 디지털 사진첩, 사진 보관함
   const navItems = useMemo(() => {
-    const items = [
-      { id: "dashboard", icon: LayoutDashboard, label: t("dashboard"), isAi: false },
-      { id: "duplicates", icon: Hash, label: t("duplicates"), isAi: false },
+    return [
       {
-        id: "burst",
-        icon: Film,
-        label: language === "ko" ? "애니메이션 스튜디오" : "Animation Studio",
+        id: "duplicates",
+        icon: Hash,
+        label: language === "ko" ? "중복 사진 정리" : "Duplicates Clean",
         isAi: false,
       },
-      { id: "library", icon: ImageIcon, label: t("library"), isAi: false },
+      {
+        id: "photobook",
+        icon: BookOpen,
+        label: language === "ko" ? "디지털 사진첩" : "Digital Photobook",
+        isAi: false,
+      },
+      {
+        id: "library",
+        icon: ImageIcon,
+        label: language === "ko" ? "사진 보관함" : "Photo Library",
+        isAi: false,
+      },
     ];
-
-    if (isAiConfigured) {
-      items.push(
-        {
-          id: "people",
-          icon: Users,
-          label: language === "ko" ? "인물 분류 (AI)" : "People Hub (AI)",
-          isAi: true,
-        },
-        {
-          id: "memories",
-          icon: Flame,
-          label: language === "ko" ? "추억 앨범 (AI)" : "Memories (AI)",
-          isAi: true,
-        },
-        {
-          id: "enhancement",
-          icon: Wand2,
-          label: language === "ko" ? "화질 복원 (AI)" : "AI Enhance",
-          isAi: true,
-        }
-      );
-    }
-
-    items.push({ id: "trash", icon: Trash2, label: t("trashBin"), isAi: false });
-    return items;
-  }, [t, language, isAiConfigured]);
+  }, [language]);
 
   const [selectedFolders, setSelectedFolders] = useState<string[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
@@ -1651,21 +1637,6 @@ export default function App() {
             <h1 className="text-xl font-bold tracking-tight">{t("title")}</h1>
           </div>
 
-          <button
-            onClick={() => setShowDiagnostics(true)}
-            className="w-full flex items-center justify-between px-4 py-3 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-2xl border border-indigo-500/20 transition-all group cursor-pointer"
-          >
-            <div className="flex items-center gap-3">
-              <Activity size={18} className="group-hover:animate-pulse" />
-              <span className="text-xs font-black uppercase tracking-widest">
-                {t("auditHealth")}
-              </span>
-            </div>
-            <div
-              className={`w-2 h-2 rounded-full ${thermalThrottleActive ? "bg-orange-500 animate-pulse" : "bg-emerald-500"}`}
-            />
-          </button>
-
           <nav className="flex flex-col gap-2 flex-1 overflow-y-auto pr-2 custom-scrollbar">
             {navItems.map((item, idx) => {
               const isAiTab = Boolean(item.isAi);
@@ -1866,34 +1837,10 @@ export default function App() {
                   {t(activeTab as any)}
                 </h2>
               </div>
-
-              {/* Mobile Quick Action Pill */}
-              <div className="flex items-center gap-1.5 sm:hidden">
-                <button
-                  onClick={() => setShowDiagnostics(true)}
-                  className="p-2 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20"
-                  title={t("auditHealth")}
-                >
-                  <Activity size={16} />
-                </button>
-              </div>
             </div>
 
             <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 w-full sm:w-auto flex-wrap sm:flex-nowrap">
               <PWAInstallButton language={language} />
-              <button
-                onClick={() => setShowDiagnostics(true)}
-                className="hidden sm:flex shrink-0 items-center gap-2 px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-xl border border-indigo-500/20 transition-all cursor-pointer group mr-1"
-                title={t("auditHealth")}
-              >
-                <Activity size={14} className="group-hover:animate-pulse text-indigo-400" />
-                <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">
-                  {t("auditHealth")}
-                </span>
-                <div
-                  className={`w-2 h-2 rounded-full ${thermalThrottleActive ? "bg-orange-500 animate-pulse" : "bg-emerald-500"}`}
-                />
-              </button>
 
               {peerCount > 0 && (
                 <div
@@ -2220,6 +2167,7 @@ export default function App() {
                 categoryStats={categoryStats}
                 formatStats={formatStats}
                 dateStats={dateStats}
+                onOpenPhotobook={() => setActiveTab("photobook")}
               />
             )}
 
@@ -2249,14 +2197,19 @@ export default function App() {
                 dedupeOptions={dedupeOptions}
                 setDedupeOptions={setDedupeOptions}
                 onRescanDuplicates={detectDuplicates}
+                onCreatePhotobook={() => setActiveTab("photobook")}
               />
             )}
 
-            {activeTab === "burst" && (
-              <BurstTab
-                setSelectedPhotoId={setSelectedPhotoId}
-                addNotification={addNotification}
-                openMotionCreator={(photos) => setMotionCreatorPhotos(photos)}
+            {activeTab === "photobook" && (
+              <PhotobookTab
+                libraryPhotos={libraryPhotos}
+                isAiConfigured={isAiConfigured}
+                onOpenAiKeyModal={() => {
+                  setAiKeyFeatureName(language === "ko" ? "AI 감성 스토리 작가" : "AI Storyteller");
+                  setIsAiKeyModalOpen(true);
+                }}
+                onSwitchToDuplicates={() => setActiveTab("duplicates")}
               />
             )}
 
@@ -2461,40 +2414,6 @@ export default function App() {
                   })}
                 </div>
               </div>
-            )}
-
-            {activeTab === "memories" && isAiConfigured && (
-              <MemoriesTab
-                memories={memoriesList}
-                eventSummaries={eventSummaries}
-                generateAllMemorySummaries={generateAllMemorySummaries}
-                handleGenerateAISummary={handleGenerateAISummary}
-              />
-            )}
-
-            {activeTab === "enhancement" && isAiConfigured && (
-              <EnhancementTab setModal={setModal} />
-            )}
-
-            {activeTab === "engine" && (
-              <EngineTab
-                airGappedMode={airGappedMode}
-                setAirGappedMode={setAirGappedMode}
-                onnxInfo={onnxInfo}
-                watchPaths={watchPaths}
-                addWatchPath={addWatchPath}
-                removeWatchPath={removeWatchPath}
-                handleStartScan={handleStartScan}
-                addNotification={addNotification}
-                refreshDBCount={refreshDBCount}
-                scanSpeed={scanSpeed}
-                setScanSpeed={setScanSpeed}
-                onOpenAiKeyModal={() => {
-                  setAiKeyFeatureName(undefined);
-                  setIsAiKeyModalOpen(true);
-                }}
-                onPurgeLocalIndex={handleFullAppReset}
-              />
             )}
 
             {activeTab === "trash" && (
@@ -3742,23 +3661,70 @@ export default function App() {
                     </div>
                   )}
 
+                  {/* Integrated AI Photo Enhancement (화질 복원 모달 통합) */}
+                  <div className="mt-6 pt-5 border-t border-white/10 space-y-3">
+                    <div className="p-4 rounded-2xl bg-linear-to-br from-indigo-950/70 via-purple-950/40 to-slate-900 border border-indigo-500/30 shadow-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400">
+                            <Sparkles size={16} className="animate-pulse" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-black text-white uppercase tracking-wider block">
+                              {language === "ko" ? "AI 화질 복원 & 4X 업스케일" : "AI Photo Enhancement"}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {language === "ko" ? "초해상도 복원 및 노이즈 제거" : "Super Resolution & De-noising"}
+                            </span>
+                          </div>
+                        </div>
+                        {selectedPhoto.qualityTags?.includes("AI-Enhanced") && (
+                          <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-fade-in flex items-center gap-1">
+                            <CheckCircle2 size={10} />
+                            {language === "ko" ? "복원완료" : "ENHANCED"}
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-[11px] text-slate-300 leading-relaxed mb-3">
+                        {language === "ko"
+                          ? "저해상도 및 흐릿한 사진을 고해상도로 4배 확대 복원하고 선명도와 다이내믹 레인지를 최적화합니다."
+                          : "Upscales low-res assets 4X and sharpens micro-details with neural color restoration."}
+                      </p>
+
+                      <button
+                        onClick={async () => {
+                          await handleEnhance(selectedPhoto);
+                        }}
+                        className="w-full py-2.5 bg-linear-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                      >
+                        <Wand2 size={14} className="text-amber-300" />
+                        <span>
+                          {selectedPhoto.qualityTags?.includes("AI-Enhanced")
+                            ? (language === "ko" ? "✨ 화질 복원 재실행" : "✨ Re-run AI Enhancement")
+                            : (language === "ko" ? "✨ 원클릭 화질 복원 실행" : "✨ Enhance Photo Quality")}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Actions */}
-                  <div className="pt-4 space-y-3">
+                  <div className="pt-2 space-y-2.5">
                     <button
                       onClick={() => setShowSocialExport(true)}
-                      className="w-full py-3 bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 text-indigo-400 font-black rounded-xl text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 italic"
+                      className="w-full py-2.5 bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 text-indigo-400 font-black rounded-xl text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 italic"
                     >
                       <Instagram size={14} /> {t("exportForSocial")}
                     </button>
                     <button
                       onClick={() => setShowPrintOpt(true)}
-                      className="w-full py-3 bg-emerald-600/20 hover:bg-emerald-600/40 border border-emerald-500/30 text-emerald-400 font-black rounded-xl text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 italic"
+                      className="w-full py-2.5 bg-emerald-600/20 hover:bg-emerald-600/40 border border-emerald-500/30 text-emerald-400 font-black rounded-xl text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 italic"
                     >
                       <Printer size={14} /> {t("masterForPrint")}
                     </button>
                     <button
                       onClick={() => setShowDeepRecovery(true)}
-                      className="w-full py-3 bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/30 text-rose-400 font-black rounded-xl text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 italic"
+                      className="w-full py-2.5 bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/30 text-rose-400 font-black rounded-xl text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 italic"
                     >
                       <Binary size={14} /> {t("deepForensicRecovery")}
                     </button>
@@ -3819,6 +3785,15 @@ export default function App() {
                       shortcut: "D",
                     },
                     {
+                      label: language === "ko" ? "디지털 사진첩 열기" : "Open Digital Photobook",
+                      icon: BookOpen,
+                      action: () => {
+                        setActiveTab("photobook");
+                        setShowCommandPalette(false);
+                      },
+                      shortcut: "P",
+                    },
+                    {
                       label: t("launchSmartRepair"),
                       icon: Wand2,
                       action: () => {
@@ -3835,9 +3810,13 @@ export default function App() {
                       },
                     },
                     {
-                      label: "System Diagnostics",
-                      icon: Cpu,
-                      action: () => setActiveTab("engine"),
+                      label: language === "ko" ? "사진 보관함 열기" : "Open Photo Library",
+                      icon: ImageIcon,
+                      action: () => {
+                        setActiveTab("library");
+                        setShowCommandPalette(false);
+                      },
+                      shortcut: "L",
                     },
                     {
                       label: "Toggle Watcher",
@@ -4017,24 +3996,19 @@ export default function App() {
         <div className="lg:hidden fixed bottom-2 left-2 right-2 z-40 bg-slate-950/90 backdrop-blur-2xl border border-white/10 p-1.5 rounded-2xl flex justify-around items-center shadow-[0_10px_30px_rgba(0,0,0,0.8)] pb-[calc(0.375rem+env(safe-area-inset-bottom))]">
           {[
             {
-              id: "dashboard",
-              icon: LayoutDashboard,
-              label: language === "ko" ? "대시보드" : "Dashboard",
-            },
-            {
               id: "duplicates",
               icon: Hash,
-              label: language === "ko" ? "중복사진" : "Duplicates",
+              label: language === "ko" ? "중복정리" : "Duplicates",
+            },
+            {
+              id: "photobook",
+              icon: BookOpen,
+              label: language === "ko" ? "디지털 사진첩" : "Photobook",
             },
             {
               id: "library",
               icon: ImageIcon,
-              label: language === "ko" ? "라이브러리" : "Library",
-            },
-            {
-              id: "engine",
-              icon: Cpu,
-              label: language === "ko" ? "가변 AI" : "AI Engine",
+              label: language === "ko" ? "보관함" : "Library",
             },
           ].map((tab) => {
             const isActive = activeTab === tab.id;
@@ -4056,7 +4030,7 @@ export default function App() {
                       : "text-slate-400"
                   }
                 />
-                <span className="text-[10px] tracking-tight truncate font-sans font-medium max-w-[56px]">
+                <span className="text-[10px] tracking-tight truncate font-sans font-medium max-w-[64px]">
                   {tab.label}
                 </span>
               </button>
@@ -4110,24 +4084,6 @@ export default function App() {
                     <X size={20} />
                   </button>
                 </div>
-
-                <button
-                  onClick={() => {
-                    setShowDiagnostics(true);
-                    setMobileMenuOpen(false);
-                  }}
-                  className="w-full flex items-center justify-between px-4 py-3 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-2xl border border-indigo-500/20 transition-all group cursor-pointer"
-                >
-                  <div className="flex items-center gap-3">
-                    <Activity size={18} className="group-hover:animate-pulse" />
-                    <span className="text-xs font-black uppercase tracking-widest">
-                      {t("auditHealth")}
-                    </span>
-                  </div>
-                  <div
-                    className={`w-2 h-2 rounded-full ${thermalThrottleActive ? "bg-orange-500 animate-pulse" : "bg-emerald-500"}`}
-                  />
-                </button>
 
                 <nav className="flex flex-col gap-2 flex-1 overflow-y-auto pr-2 custom-scrollbar pb-10">
                   {navItems.map((item, idx) => {

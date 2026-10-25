@@ -2,7 +2,8 @@
   "name": "react-example",
   "private": true,
   "version": "2.4.0",
-  "author": "SnapClean Team",
+  "author": "AhBiYout",
+  "license": "MIT",
   "description": "AI Photo Management",
   "type": "module",
   "scripts": {

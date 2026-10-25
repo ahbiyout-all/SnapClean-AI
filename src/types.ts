@@ -52,3 +52,67 @@ export interface ScanStats {
   discoveredWasteBytes?: number;
   streamingActive?: boolean;
 }
+
+export type PhotobookTheme = 'classic-hardcover' | 'modern-magazine' | 'vintage-film' | 'art-gallery';
+export type StoryTone = 'lyrical' | 'travel' | 'family' | 'minimal';
+
+export type PhotobookPageLayout = 
+  | 'cover'
+  | 'back-cover'
+  | 'full-bleed'
+  | 'hero-with-caption'
+  | 'duo-vertical'
+  | 'trio-collage'
+  | 'quad-grid'
+  | 'quote-memory';
+
+export interface PhotobookPhoto {
+  photoId?: number;
+  path: string;
+  caption?: string;
+  date?: string;
+  location?: string;
+  rotation?: number; // subtle scrapbook tilt (-3 to 3 deg)
+  blurScore?: number;
+  aestheticScore?: number;
+}
+
+export interface PhotobookChapter {
+  id: string;
+  title: string;
+  subtitle?: string;
+  prologue?: string;
+  timeRange?: { start: number; end: number };
+  locationName?: string;
+  heroPhotoPath?: string;
+  photoCount?: number;
+}
+
+export interface PhotobookPage {
+  id: string;
+  pageNumber: number; // 0 = Front cover, 1..N = content pages, N+1 = Back cover
+  layout: PhotobookPageLayout;
+  photos: PhotobookPhoto[];
+  chapterTitle?: string;
+  subtitle?: string;
+  storyNote?: string;
+  accentQuote?: string;
+}
+
+export interface PhotobookRecord {
+  id: string;
+  title: string;
+  subtitle?: string;
+  theme: PhotobookTheme;
+  storyTone?: StoryTone;
+  chapters?: PhotobookChapter[];
+  coverImage?: string;
+  coverColor?: string;
+  createdAt: number;
+  updatedAt: number;
+  totalPhotos: number;
+  dateRangeText?: string;
+  locationSummary?: string;
+  bgmType?: 'gentle-piano' | 'warm-vinyl' | 'summer-breeze' | 'none';
+  pages: PhotobookPage[];
+}
