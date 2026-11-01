@@ -44,6 +44,7 @@ export interface PhotoCardProps {
   infoDensity?: 'clean' | 'compact' | 'detailed';
   preserveAspect?: boolean;
   onInspect?: (photo: PhotoRecord) => void;
+  onAnimate?: (photo: PhotoRecord) => void;
 }
 
 const KeyframeAnimator = ({ keyframes, photoId }: { keyframes: string[], photoId: string | number | undefined }) => {
@@ -91,6 +92,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   infoDensity = 'compact',
   preserveAspect = false,
   onInspect,
+  onAnimate,
 }) => {
   const { t } = useI18n();
   const fallbackInstanceId = React.useId();
@@ -266,6 +268,8 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         fastViewEngine.triggerHaptic('heavy');
         if (onDoubleClick) {
           onDoubleClick(photo);
+        } else if (onInspect) {
+          onInspect(photo);
         } else {
           SystemAPI.openInDefaultApp(photo, addNotification);
         }
@@ -657,6 +661,21 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 
       <div className="absolute bottom-0 inset-x-0 bg-linear-to-t from-black/90 p-2 opacity-0 group-hover:opacity-100 transition-opacity z-20 flex items-center justify-between gap-1">
         <p className="text-[9px] text-white/70 truncate flex-1" title={photo.path}>{photo.path}</p>
+        
+        {onAnimate && !isVideo && !isPdf && !isAudio && !isDocText && (
+          <Tooltip
+            title={t('aiMotion') || 'AI 모션'}
+            content="사진에 움직임을 부여하여 5초 분량의 비디오를 생성합니다."
+          >
+            <button 
+              onClick={(e) => { e.stopPropagation(); onAnimate(photo); }}
+              className="p-1.5 hover:bg-white/20 bg-indigo-500/20 rounded-lg text-indigo-400 transition-colors shrink-0 cursor-pointer"
+            >
+              <Video size={13} />
+            </button>
+          </Tooltip>
+        )}
+
         {onInspect && (
           <Tooltip
             title={t('inspectPhoto') || '정밀 분석'}

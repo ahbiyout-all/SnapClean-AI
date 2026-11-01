@@ -55,11 +55,13 @@ export interface GitHubRepoConfig {
   apiUrl: string;
 }
 
-export const GITHUB_REPO_CONFIG: GitHubRepoConfig = {
+export const GITHUB_REPO_CONFIG: GitHubRepoConfig & { developer: string; blogUrl: string } = {
   owner: 'AhBiYout-all',
-  repo: 'SnapClean-AI',
-  releasesUrl: 'https://github.com/AhBiYout-all/SnapClean-AI/releases',
-  apiUrl: 'https://api.github.com/repos/AhBiYout-all/SnapClean-AI/releases/latest',
+  repo: 'SnapCleanAI',
+  developer: 'AhBiYout',
+  releasesUrl: 'https://github.com/AhBiYout-all/SnapCleanAI/releases',
+  apiUrl: 'https://api.github.com/repos/AhBiYout-all/SnapCleanAI/releases/latest',
+  blogUrl: 'https://ahbiyoutvibe.blogspot.com/',
 };
 
 const STORAGE_KEYS = {

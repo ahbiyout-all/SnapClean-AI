@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   X,
@@ -13,8 +13,12 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
+  RotateCw,
+  FlipHorizontal,
+  FlipVertical,
   Sparkles,
   Sliders,
+  SlidersHorizontal,
   Camera,
   Calendar,
   HardDrive,
@@ -28,6 +32,12 @@ import {
   Video,
   AlertCircle,
   Image as ImageIcon,
+  MapPin,
+  Tag,
+  HelpCircle,
+  Sun,
+  Contrast,
+  Sparkle
 } from "lucide-react";
 import { PhotoRecord } from "../services/db";
 import { SystemAPI } from "../services/systemApi";
@@ -50,6 +60,7 @@ export interface PhotoInspectionModalProps {
     type: "info" | "success" | "warning" | "error",
   ) => void;
   language: string;
+  onAnimatePhoto?: (photo: PhotoRecord) => void;
 }
 
 function formatBytes(bytes: number, decimals = 2): string {
@@ -85,6 +96,7 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
   onClose,
   addNotification,
   language,
+  onAnimatePhoto,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(
     Math.max(0, Math.min(initialIndex, photos.length - 1)),
@@ -95,6 +107,14 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
   const [viewMode, setViewMode] = useState<"focus" | "split" | "overlay">("focus");
   const [showMetadata, setShowMetadata] = useState(true);
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [rotation, setRotation] = useState(0); // 0, 90, 180, 270
+  const [flipH, setFlipH] = useState(false);
+  const [flipV, setFlipV] = useState(false);
+  const [filterMode, setFilterMode] = useState<'normal' | 'sharpen' | 'contrast' | 'monochrome' | 'invert'>('normal');
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [sliderPos, setSliderPos] = useState(50); // For curtain/overlay comparison (0 to 100%)
   const [isCopied, setIsCopied] = useState(false);
   const [currentImageError, setCurrentImageError] = useState(false);
@@ -103,9 +123,26 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
   const currentPhoto = photos[currentIndex];
   const comparePhoto = compareIndex !== null ? photos[compareIndex] : null;
 
-  // Key navigation
+  // Reset zoom, pan, and rotation when current photo changes
+  useEffect(() => {
+    setZoomLevel(1);
+    setPanPosition({ x: 0, y: 0 });
+    setRotation(0);
+    setFlipH(false);
+    setFlipV(false);
+    setCurrentImageError(false);
+  }, [currentIndex]);
+
+  // Keyboard navigation & Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
       if (e.key === "Escape") {
         onClose();
       } else if (e.key === "ArrowLeft") {
@@ -116,11 +153,90 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
         if (currentPhoto?.id) {
           onToggleKeep(currentPhoto.id);
         }
+      } else if (e.key === "+" || e.key === "=") {
+        setZoomLevel((z) => Math.min(8, z + 0.5));
+      } else if (e.key === "-" || e.key === "_") {
+        setZoomLevel((z) => {
+          const next = Math.max(0.5, z - 0.5);
+          if (next <= 1) setPanPosition({ x: 0, y: 0 });
+          return next;
+        });
+      } else if (e.key === "0") {
+        setZoomLevel(1);
+        setPanPosition({ x: 0, y: 0 });
+        setRotation(0);
+        setFlipH(false);
+        setFlipV(false);
+      } else if (e.key.toLowerCase() === "r") {
+        setRotation((r) => (r + 90) % 360);
+      } else if (e.key.toLowerCase() === "f") {
+        const modes: Array<'normal' | 'sharpen' | 'contrast' | 'monochrome' | 'invert'> = ['normal', 'sharpen', 'contrast', 'monochrome', 'invert'];
+        setFilterMode((prev) => {
+          const idx = modes.indexOf(prev);
+          return modes[(idx + 1) % modes.length];
+        });
+      } else if (e.key.toLowerCase() === "h") {
+        setShowShortcuts((prev) => !prev);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [photos.length, currentPhoto, onToggleKeep, onClose]);
+
+  // Wheel zoom
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.25 : -0.25;
+    setZoomLevel((prev) => {
+      const next = Math.max(0.5, Math.min(8, prev + delta));
+      if (next <= 1) {
+        setPanPosition({ x: 0, y: 0 });
+      }
+      return next;
+    });
+  };
+
+  // Drag pan
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (zoomLevel > 1) {
+      setIsDragging(true);
+      setDragStart({ x: e.clientX - panPosition.x, y: e.clientY - panPosition.y });
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging && zoomLevel > 1) {
+      setPanPosition({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const getFilterCss = useCallback(() => {
+    switch (filterMode) {
+      case 'sharpen':
+        return 'contrast(130%) brightness(105%) saturate(120%)';
+      case 'contrast':
+        return 'contrast(160%) saturate(140%)';
+      case 'monochrome':
+        return 'grayscale(100%) contrast(140%)';
+      case 'invert':
+        return 'invert(100%) hue-rotate(180deg)';
+      default:
+        return 'none';
+    }
+  }, [filterMode]);
+
+  const getTransformCss = useCallback(() => {
+    const scaleX = flipH ? -1 : 1;
+    const scaleY = flipV ? -1 : 1;
+    return `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel}) rotate(${rotation}deg) scaleX(${scaleX}) scaleY(${scaleY})`;
+  }, [panPosition, zoomLevel, rotation, flipH, flipV]);
 
   const [asyncCurrentUrl, setAsyncCurrentUrl] = useState<string>("");
   const [asyncCompareUrl, setAsyncCompareUrl] = useState<string>("");
@@ -315,9 +431,15 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
         <div className="flex items-center gap-2">
           {/* Zoom controls */}
           <div className="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-xl border border-white/10 text-xs">
-            <Tooltip content={language === "ko" ? "축소" : "Zoom Out"}>
+            <Tooltip content={language === "ko" ? "축소 (-)" : "Zoom Out (-)"}>
               <button
-                onClick={() => setZoomLevel((z) => Math.max(0.5, z - 0.25))}
+                onClick={() =>
+                  setZoomLevel((z) => {
+                    const next = Math.max(0.5, z - 0.25);
+                    if (next <= 1) setPanPosition({ x: 0, y: 0 });
+                    return next;
+                  })
+                }
                 className="p-1 hover:text-white text-slate-400 cursor-pointer"
               >
                 <ZoomOut size={14} />
@@ -326,23 +448,115 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
             <span className="font-mono text-[11px] text-slate-300 w-12 text-center">
               {Math.round(zoomLevel * 100)}%
             </span>
-            <Tooltip content={language === "ko" ? "확대" : "Zoom In"}>
+            <Tooltip content={language === "ko" ? "확대 (+)" : "Zoom In (+)"}>
               <button
-                onClick={() => setZoomLevel((z) => Math.min(4, z + 0.25))}
+                onClick={() => setZoomLevel((z) => Math.min(8, z + 0.25))}
                 className="p-1 hover:text-white text-slate-400 cursor-pointer"
               >
                 <ZoomIn size={14} />
               </button>
             </Tooltip>
-            <Tooltip content={language === "ko" ? "100% 원본 배율로 리셋" : "Reset Zoom (100%)"}>
+
+            {/* Quick Zoom Presets */}
+            <button
+              onClick={() => {
+                setZoomLevel(zoomLevel === 2 ? 1 : 2);
+                if (zoomLevel === 2) setPanPosition({ x: 0, y: 0 });
+              }}
+              className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white/10 hover:bg-white/20 text-indigo-300 rounded ml-1 cursor-pointer"
+              title="Toggle 2x Zoom"
+            >
+              2x
+            </button>
+            <button
+              onClick={() => {
+                setZoomLevel(zoomLevel === 4 ? 1 : 4);
+                if (zoomLevel === 4) setPanPosition({ x: 0, y: 0 });
+              }}
+              className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white/10 hover:bg-white/20 text-indigo-300 rounded cursor-pointer"
+              title="Toggle 4x Zoom"
+            >
+              4x
+            </button>
+
+            <Tooltip content={language === "ko" ? "원본 배율 및 위치 리셋 (0)" : "Reset View (0)"}>
               <button
-                onClick={() => setZoomLevel(1)}
+                onClick={() => {
+                  setZoomLevel(1);
+                  setPanPosition({ x: 0, y: 0 });
+                  setRotation(0);
+                  setFlipH(false);
+                  setFlipV(false);
+                }}
                 className="p-1 hover:text-white text-slate-400 cursor-pointer border-l border-white/10 ml-1 pl-1.5"
               >
                 <RotateCcw size={12} />
               </button>
             </Tooltip>
           </div>
+
+          {/* Rotate & Flip Controls */}
+          <div className="hidden md:flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10 text-xs">
+            <Tooltip title={language === "ko" ? "시계방향 90° 회전 (R)" : "Rotate 90° Clockwise (R)"}>
+              <button
+                onClick={() => setRotation((r) => (r + 90) % 360)}
+                className="p-1.5 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-colors cursor-pointer"
+              >
+                <RotateCw size={14} />
+              </button>
+            </Tooltip>
+            <Tooltip title={language === "ko" ? "좌우 반전" : "Flip Horizontal"}>
+              <button
+                onClick={() => setFlipH((f) => !f)}
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  flipH ? "bg-indigo-600 text-white" : "hover:bg-white/10 text-slate-300 hover:text-white"
+                }`}
+              >
+                <FlipHorizontal size={14} />
+              </button>
+            </Tooltip>
+          </div>
+
+          {/* Filter Modes Toggle */}
+          <div className="hidden lg:flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10 text-xs">
+            <span className="text-[10px] text-slate-400 font-bold px-1 uppercase flex items-center gap-1">
+              <SlidersHorizontal size={12} className="text-amber-400" />
+              <span>{language === "ko" ? "필터" : "Filter"}:</span>
+            </span>
+            {[
+              { id: "normal", labelKo: "원본", labelEn: "Normal" },
+              { id: "sharpen", labelKo: "선명도", labelEn: "Sharpen" },
+              { id: "contrast", labelKo: "대비", labelEn: "Contrast" },
+              { id: "monochrome", labelKo: "흑백", labelEn: "B&W" },
+              { id: "invert", labelKo: "반전", labelEn: "Invert" },
+            ].map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setFilterMode(f.id as any)}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                  filterMode === f.id
+                    ? "bg-amber-500 text-slate-950 shadow-sm"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {language === "ko" ? f.labelKo : f.labelEn}
+              </button>
+            ))}
+          </div>
+
+          {/* Keyboard Shortcuts Help Button */}
+          <Tooltip title={language === "ko" ? "단축키 안내 (H)" : "Keyboard Shortcuts (H)"}>
+            <button
+              onClick={() => setShowShortcuts((s) => !s)}
+              className={`p-2 rounded-xl border transition-all cursor-pointer ${
+                showShortcuts
+                  ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                  : "bg-white/5 border-white/10 text-slate-400 hover:text-white"
+              }`}
+            >
+              <HelpCircle size={16} />
+            </button>
+          </Tooltip>
 
           <Tooltip
             title={language === "ko" ? "메타데이터 정보창" : "Metadata Panel"}
@@ -399,7 +613,44 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
         </button>
 
         {/* Photo Display Canvas Area */}
-        <div className="flex-1 flex items-center justify-center p-4 relative overflow-hidden bg-slate-950">
+        <div
+          className="flex-1 flex items-center justify-center p-4 relative overflow-hidden bg-slate-950 select-none"
+          onWheel={handleWheel}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        >
+          {/* Shortcuts Overlay Popup */}
+          <AnimatePresence>
+            {showShortcuts && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="absolute top-4 right-4 z-[400] w-80 bg-slate-900/95 border border-white/15 rounded-2xl p-4 shadow-2xl backdrop-blur-xl text-xs space-y-3"
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-white/10 font-bold text-white">
+                  <span className="flex items-center gap-1.5 text-amber-400">
+                    <HelpCircle size={14} />
+                    {language === "ko" ? "단축키 안내" : "Keyboard Shortcuts"}
+                  </span>
+                  <button onClick={() => setShowShortcuts(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
+                </div>
+                <div className="space-y-1.5 text-slate-300 font-mono text-[11px]">
+                  <div className="flex justify-between"><span>← / → Arrow</span><span className="text-indigo-400 font-bold">이전 / 다음 사진</span></div>
+                  <div className="flex justify-between"><span>Wheel / (+ / -)</span><span className="text-indigo-400 font-bold">휠 확대 / 축소</span></div>
+                  <div className="flex justify-between"><span>Drag (Zoomed)</span><span className="text-indigo-400 font-bold">드래그 이동</span></div>
+                  <div className="flex justify-between"><span>Space / Enter</span><span className="text-indigo-400 font-bold">보존 / 삭제 토글</span></div>
+                  <div className="flex justify-between"><span>R</span><span className="text-indigo-400 font-bold">90° 회전</span></div>
+                  <div className="flex justify-between"><span>F</span><span className="text-indigo-400 font-bold">필터 모드 순환</span></div>
+                  <div className="flex justify-between"><span>0</span><span className="text-indigo-400 font-bold">뷰 리셋 (100%)</span></div>
+                  <div className="flex justify-between"><span>ESC</span><span className="text-indigo-400 font-bold">뷰어 닫기</span></div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {viewMode === "focus" && currentPhoto && (
             <div className="relative max-w-full max-h-full flex items-center justify-center overflow-hidden">
               {checkIsVideo(currentPhoto) ? (
@@ -411,6 +662,11 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
                   loop
                   playsInline
                   className="max-h-[82vh] max-w-full object-contain rounded-lg shadow-2xl"
+                  style={{
+                    transform: getTransformCss(),
+                    filter: getFilterCss(),
+                    transition: isDragging ? "none" : "transform 0.15s ease-out"
+                  }}
                 />
               ) : currentImageError ? (
                 <div className="flex flex-col items-center justify-center p-8 text-center bg-slate-900/90 rounded-2xl border border-white/10 max-w-md shadow-2xl">
@@ -427,7 +683,6 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
                     <button
                       onClick={() => {
                         setCurrentImageError(false);
-                        // Force renewal of transient URL
                         const renewed = SystemAPI.getImageUrl(currentPhoto.path, "full", true);
                         if (renewed) setAsyncCurrentUrl(renewed);
                       }}
@@ -452,10 +707,22 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
                 <img
                   src={currentDisplayUrl || ""}
                   alt={getFileName(currentPhoto.path)}
-                  className="max-h-[82vh] max-w-full object-contain transition-transform duration-200 shadow-2xl rounded-lg"
-                  style={{ transform: `scale(${zoomLevel})` }}
+                  className="max-h-[82vh] max-w-full object-contain shadow-2xl rounded-lg"
+                  style={{
+                    transform: getTransformCss(),
+                    filter: getFilterCss(),
+                    transition: isDragging ? "none" : "transform 0.15s ease-out",
+                    cursor: zoomLevel > 1 ? (isDragging ? "grabbing" : "grab") : "default"
+                  }}
+                  onDoubleClick={() => {
+                    if (zoomLevel === 1) {
+                      setZoomLevel(2.5);
+                    } else {
+                      setZoomLevel(1);
+                      setPanPosition({ x: 0, y: 0 });
+                    }
+                  }}
                   onError={() => {
-                    // Try fast thumbnail fallback first
                     fastViewEngine.getFastThumbnail(currentPhoto)
                       .then((res) => {
                         if (res.url && res.url !== asyncCurrentUrl) {
@@ -721,14 +988,47 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
                 <div className="bg-white/5 p-3 rounded-xl border border-white/5">
                   <div className="text-[10px] text-slate-400 flex items-center gap-1 mb-1 font-bold">
                     <Eye size={11} className="text-cyan-400" />
-                    {language === "ko" ? "해상도 (픽셀)" : "Resolution"}
+                    {language === "ko" ? "해상도 (화소)" : "Resolution"}
                   </div>
-                  <div className="font-mono font-bold text-white text-sm">
-                    {currentPhoto.width && currentPhoto.height
-                      ? `${currentPhoto.width} × ${currentPhoto.height}`
-                      : "-"}
+                  <div className="font-mono font-bold text-white text-sm flex items-center justify-between">
+                    <span>
+                      {currentPhoto.width && currentPhoto.height
+                        ? `${currentPhoto.width} × ${currentPhoto.height}`
+                        : "-"}
+                    </span>
+                    {currentPhoto.width && currentPhoto.height && (
+                      <span className="text-[10px] text-indigo-300 font-normal">
+                        {((currentPhoto.width * currentPhoto.height) / 1000000).toFixed(1)}MP
+                      </span>
+                    )}
                   </div>
                 </div>
+
+                {/* AI Aesthetic Score */}
+                {(currentPhoto.aestheticScore !== undefined || currentPhoto.aiScore !== undefined) && (
+                  <div className="bg-amber-500/10 p-3 rounded-xl border border-amber-500/20">
+                    <div className="text-[10px] text-amber-400 flex items-center gap-1 mb-1 font-bold">
+                      <Sparkles size={11} className="text-amber-400" />
+                      {language === "ko" ? "AI 미적 점수" : "Aesthetic Score"}
+                    </div>
+                    <div className="font-mono font-black text-amber-300 text-sm">
+                      {(currentPhoto.aestheticScore || currentPhoto.aiScore || 0).toFixed(1)} / 10.0
+                    </div>
+                  </div>
+                )}
+
+                {/* Blur / Sharpness Score */}
+                {currentPhoto.blurScore !== undefined && (
+                  <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/20">
+                    <div className="text-[10px] text-emerald-400 flex items-center gap-1 mb-1 font-bold">
+                      <Eye size={11} className="text-emerald-400" />
+                      {language === "ko" ? "선명도 (선명도 점수)" : "Blur/Sharpness"}
+                    </div>
+                    <div className="font-mono font-black text-emerald-300 text-sm">
+                      {currentPhoto.blurScore.toFixed(0)} Score
+                    </div>
+                  </div>
+                )}
 
                 <div className="bg-white/5 p-3 rounded-xl border border-white/5">
                   <div className="text-[10px] text-slate-400 flex items-center gap-1 mb-1 font-bold">
@@ -750,6 +1050,56 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Advanced EXIF Parameters */}
+              {(currentPhoto.iso || currentPhoto.fNumber || currentPhoto.exposureTime) && (
+                <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-1.5 text-xs">
+                  <div className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                    <Camera size={11} className="text-indigo-400" />
+                    <span>{language === "ko" ? "EXIF 노출 정보" : "EXIF Exposure Parameters"}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 font-mono text-[11px] text-slate-200 bg-black/40 p-2 rounded-lg border border-white/5">
+                    <div>ISO: <span className="font-bold text-amber-300">{currentPhoto.iso || "-"}</span></div>
+                    <div>f/: <span className="font-bold text-amber-300">{currentPhoto.fNumber ? `f/${currentPhoto.fNumber}` : "-"}</span></div>
+                    <div>Exp: <span className="font-bold text-amber-300">{currentPhoto.exposureTime ? `${currentPhoto.exposureTime}s` : "-"}</span></div>
+                  </div>
+                </div>
+              )}
+
+              {/* Location & GPS Info */}
+              {(currentPhoto.locationName || (currentPhoto.latitude && currentPhoto.longitude)) && (
+                <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-1 text-xs">
+                  <div className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                    <MapPin size={11} className="text-rose-400" />
+                    <span>{language === "ko" ? "위치 및 GPS" : "Location & GPS"}</span>
+                  </div>
+                  <div className="font-mono text-[11px] text-slate-200 bg-black/40 p-2 rounded-lg border border-white/5 space-y-0.5">
+                    {currentPhoto.locationName && <div className="font-bold text-rose-300 truncate">{currentPhoto.locationName}</div>}
+                    {currentPhoto.latitude && currentPhoto.longitude && (
+                      <div className="text-[10px] text-slate-400">
+                        GPS: {currentPhoto.latitude.toFixed(5)}, {currentPhoto.longitude.toFixed(5)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Tags & ML Concepts */}
+              {currentPhoto.tags && currentPhoto.tags.length > 0 && (
+                <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-1.5 text-xs">
+                  <div className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                    <Tag size={11} className="text-cyan-400" />
+                    <span>{language === "ko" ? "AI 자동 태그" : "AI Detected Tags"}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {currentPhoto.tags.map((tag, tIdx) => (
+                      <span key={tIdx} className="px-2 py-0.5 bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 rounded-md text-[10px] font-mono">
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Full File Path with Copy Button */}
               <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-1.5">
@@ -783,6 +1133,17 @@ export const PhotoInspectionModal: React.FC<PhotoInspectionModalProps> = ({
 
             {/* Bottom Actions inside Inspector */}
             <div className="pt-4 border-t border-white/10 space-y-2 mt-4">
+              {onAnimatePhoto && currentPhoto && !checkIsVideo(currentPhoto) && currentPhoto.type !== "application/pdf" && (
+                <button
+                  type="button"
+                  onClick={() => onAnimatePhoto(currentPhoto)}
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-violet-600/30"
+                >
+                  <Video size={14} className="text-violet-200" />
+                  <span>{language === "ko" ? "AI 모션 영상 생성 (5초 비디오)" : "Generate AI Motion Video (5s)"}</span>
+                </button>
+              )}
+
               <button
                 onClick={() => currentPhoto.id && onKeepOnlyThis(currentPhoto.id)}
                 className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-indigo-600/30"

@@ -35,10 +35,20 @@ import {
   Bookmark,
   ChevronDown,
   ChevronUp,
-  ExternalLink
+  ExternalLink,
+  Settings,
+  History,
+  Briefcase,
+  X,
+  Shuffle,
+  Smartphone,
+  Baby,
+  MessageCircle,
+  HelpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { PhotoRecord } from '../../services/db';
+import { db, PhotoRecord } from '../../services/db';
+import { SystemAPI } from '../../services/systemApi';
 import { PhotobookRecord, PhotobookTheme, StoryTone, PhotobookPhoto, PhotobookChapter } from '../../types';
 import { 
   PHOTOBOOK_THEMES, 
@@ -53,9 +63,11 @@ import {
   populateBookWithAiNarrative,
   applyAiNarrativeToPhotobook
 } from '../../services/photobookGenerator';
-import { generateEventSummary, EventSummary } from '../../services/geminiService';
-import { FlipBookViewer, BookPhotoView } from '../photobook/FlipBookViewer';
+import { generateEventSummary, EventSummary, filterIrrelevantPhotos } from '../../services/geminiService';
+import { FlipBookViewer, BookPhotoView, getFallbackPhotoUrl } from '../photobook/FlipBookViewer';
 import { useI18n } from '../../i18n/context';
+
+const monthEnNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 interface PhotobookTabProps {
   libraryPhotos: PhotoRecord[];
@@ -63,6 +75,7 @@ interface PhotobookTabProps {
   onOpenAiKeyModal?: () => void;
   initialSelectedBookId?: string | null;
   onSwitchToDuplicates?: () => void;
+  onAnimatePhoto?: (photo: PhotoRecord) => void;
 }
 
 export const PhotobookTab: React.FC<PhotobookTabProps> = ({
@@ -71,11 +84,13 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
   onOpenAiKeyModal,
   initialSelectedBookId,
   onSwitchToDuplicates,
+  onAnimatePhoto,
 }) => {
   const { t, language } = useI18n();
   const [photobooks, setPhotobooks] = useState<PhotobookRecord[]>([]);
   const [activeBook, setActiveBook] = useState<PhotobookRecord | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState<string>('');
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   // Album Selection & AI Narrative States
@@ -109,23 +124,116 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
     });
   };
 
+  // AI Generation Settings
+  const [globalAiTone, setGlobalAiTone] = useState<StoryTone>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('snapclean_global_ai_tone') as StoryTone) || 'lyrical';
+    }
+    return 'lyrical';
+  });
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+  const handleUpdateGlobalTone = (tone: StoryTone) => {
+    setGlobalAiTone(tone);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('snapclean_global_ai_tone', tone);
+    }
+  };
+
   // New book wizard options
   const [newTitle, setNewTitle] = useState('');
   const [selectedStoryTone, setSelectedStoryTone] = useState<StoryTone>('lyrical');
   const [selectedTheme, setSelectedTheme] = useState<PhotobookTheme>('classic-hardcover');
   const [selectedBgm, setSelectedBgm] = useState<'gentle-piano' | 'warm-vinyl' | 'summer-breeze' | 'none'>('gentle-piano');
-  const [photoSourceMode, setPhotoSourceMode] = useState<'best-shots' | 'chapter-clustered' | 'all' | 'recent'>('chapter-clustered');
+  const [photoSourceMode, setPhotoSourceMode] = useState<'best-shots' | 'chapter-clustered' | 'all' | 'recent' | 'manual' | 'date-range'>('chapter-clustered');
+  const [selectedManualPhotoIds, setSelectedManualPhotoIds] = useState<Set<number>>(new Set());
+  const [startDate, setStartDate] = useState<string>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return d.toISOString().split('T')[0];
+  });
+  const [endDate, setEndDate] = useState<string>(() => {
+    return new Date().toISOString().split('T')[0];
+  });
   const [enableAiAutoStory, setEnableAiAutoStory] = useState(true);
+  const [isRelevanceFilteringEnabled, setIsRelevanceFilteringEnabled] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('snapclean_ai_relevance_filter');
+      return saved === null ? true : saved === 'true';
+    }
+    return true;
+  });
+  const [isImportingDirectPhotos, setIsImportingDirectPhotos] = useState(false);
+
+  // Direct photo file picker from wizard modal
+  const handleImportDirectPhotos = async () => {
+    setIsImportingDirectPhotos(true);
+    try {
+      const paths = await SystemAPI.selectFiles('image/*');
+      if (paths && paths.length > 0) {
+        const scanRes = await SystemAPI.scanDirectory('/virtual/drive');
+        if (scanRes.files && scanRes.files.length > 0) {
+          const newRecords: PhotoRecord[] = scanRes.files.map((f, i) => ({
+            originalId: f.originalId || `direct_${Date.now()}_${i}`,
+            path: f.path || `/web-local/photo_${i}.jpg`,
+            size: f.size || 1024 * 1024,
+            lastModified: f.lastModified || Date.now(),
+            dateTaken: f.dateTaken || f.lastModified || Date.now(),
+            cameraModel: f.cameraModel || 'User Device',
+            status: 'analyzed',
+            category: 'Memory',
+            aestheticScore: 8.5 + (i % 3) * 0.4,
+            blurScore: 92,
+            type: f.type || 'image/jpeg'
+          })) as any;
+
+          await db.photos.bulkPut(newRecords);
+          window.dispatchEvent(new CustomEvent('photos-database-updated'));
+          
+          const newIds = new Set<number>(newRecords.map(r => r.id!).filter(Boolean));
+          if (newIds.size > 0) {
+            setSelectedManualPhotoIds(newIds);
+            setPhotoSourceMode('manual');
+          } else {
+            setPhotoSourceMode('chapter-clustered');
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[Direct Photo Import Error]:', err);
+    } finally {
+      setIsImportingDirectPhotos(false);
+    }
+  };
 
   // Viewer options
   const [openWithTheater, setOpenWithTheater] = useState(false);
   const [openWithAutoPlay, setOpenWithAutoPlay] = useState(false);
 
   // View mode & Timeline states
-  const [viewMode, setViewMode] = useState<'shelf' | 'timeline'>('shelf');
+  const [viewMode, setViewMode] = useState<'shelf' | 'timeline' | 'family-album'>('family-album');
   const [timelineBookFilter, setTimelineBookFilter] = useState<string>('all');
   const [timelineSortAsc, setTimelineSortAsc] = useState<boolean>(true);
   const [initialViewerSpread, setInitialViewerSpread] = useState<number>(0);
+  
+  // FamilyAlbum Monthly Wide View States
+  const [selectedMonthKey, setSelectedMonthKey] = useState<string>('');
+  const [heroPhotoIndex, setHeroPhotoIndex] = useState<number>(0);
+  const [childMilestoneName, setChildMilestoneName] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('snapclean_child_name') || '시온';
+    }
+    return '시온';
+  });
+  const [childBirthDate, setChildBirthDate] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('snapclean_child_birth') || '2022-03-15';
+    }
+    return '2022-03-15';
+  });
+  const [showMilestoneSettings, setShowMilestoneSettings] = useState(false);
+  const [likedFamilyPhotos, setLikedFamilyPhotos] = useState<Set<number>>(new Set());
+
   const [previewPhotoModal, setPreviewPhotoModal] = useState<{
     photo: PhotobookPhoto;
     book: PhotobookRecord;
@@ -178,10 +286,62 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
     }
   };
 
+  // Listen for navigation & trigger events from Beginner Guide Wizard
+  useEffect(() => {
+    const handleSetMode = (e: Event) => {
+      const custom = e as CustomEvent<{ mode: 'shelf' | 'timeline' | 'family-album' }>;
+      if (custom.detail?.mode) {
+        setViewMode(custom.detail.mode);
+        setActiveBook(null);
+      }
+    };
+    const handleLaunchTheater = () => {
+      if (photobooks.length > 0) {
+        setActiveBook(photobooks[0]);
+        setOpenWithTheater(true);
+        setOpenWithAutoPlay(true);
+      }
+    };
+    const handleOpenCreate = () => {
+      setActiveBook(null);
+      setShowCreateModal(true);
+    };
+
+    window.addEventListener('photobook-set-view-mode', handleSetMode);
+    window.addEventListener('photobook-launch-theater', handleLaunchTheater);
+    window.addEventListener('photobook-open-create-wizard', handleOpenCreate);
+
+    return () => {
+      window.removeEventListener('photobook-set-view-mode', handleSetMode);
+      window.removeEventListener('photobook-launch-theater', handleLaunchTheater);
+      window.removeEventListener('photobook-open-create-wizard', handleOpenCreate);
+    };
+  }, [photobooks]);
+
   // Preview photos for wizard
   const wizardPreviewPhotos = useMemo(() => {
     let source = libraryPhotos.filter(p => !p.isDeleted);
     if (source.length === 0) source = generateSamplePhotos();
+
+    if (photoSourceMode === 'manual') {
+      const selected = source.filter(p => p.id && selectedManualPhotoIds.has(p.id));
+      return selected.length > 0 ? selected : source.slice(0, 20); // Fallback to first 20 if none selected
+    }
+
+    if (photoSourceMode === 'date-range') {
+      const startMs = startDate ? new Date(`${startDate}T00:00:00`).getTime() : 0;
+      const endMs = endDate ? new Date(`${endDate}T23:59:59`).getTime() : Infinity;
+
+      const filtered = source.filter(p => {
+        const time = p.dateTaken || p.lastModified || 0;
+        return time >= startMs && time <= endMs;
+      });
+
+      const sorted = [...filtered].sort(
+        (a, b) => (a.dateTaken || a.lastModified || 0) - (b.dateTaken || b.lastModified || 0)
+      );
+      return sorted.length > 0 ? sorted : source.slice(0, 20);
+    }
 
     if (photoSourceMode === 'best-shots') {
       return [...source].sort((a, b) => (b.aestheticScore || 0) - (a.aestheticScore || 0)).slice(0, 24);
@@ -191,7 +351,7 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
       return [...source].sort((a, b) => (a.dateTaken || a.lastModified || 0) - (b.dateTaken || b.lastModified || 0)).slice(0, 28);
     }
     return source.slice(0, 30);
-  }, [libraryPhotos, photoSourceMode]);
+  }, [libraryPhotos, photoSourceMode, selectedManualPhotoIds, startDate, endDate]);
 
   // Live Chapter Preview for wizard
   const estimatedChapters = useMemo(() => {
@@ -202,18 +362,57 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
   // Generate a new photobook
   const handleCreateNew = async () => {
     setIsGenerating(true);
+    setGenerationStatus(language === 'ko' ? '초기 분석 중...' : 'Initializing analysis...');
     try {
-      let newBook = createPhotobookFromPhotos(wizardPreviewPhotos, {
-        title: newTitle.trim() || undefined,
+      let titleToUse = newTitle.trim();
+      if (!titleToUse && photoSourceMode === 'date-range' && startDate && endDate) {
+        titleToUse = language === 'ko'
+          ? `${startDate} ~ ${endDate} 추억의 기록`
+          : `Memories (${startDate} ~ ${endDate})`;
+      }
+
+      let photosToUse = [...wizardPreviewPhotos];
+
+      // 🔮 AI Relevance Filtering: Identify and remove meaningless photos (screenshots, receipts, blurry, etc)
+      if (isRelevanceFilteringEnabled && photosToUse.length > 0) {
+        setGenerationStatus(language === 'ko' ? 'AI가 의미 없는 사진을 골라내는 중...' : 'AI Filtering irrelevant photos...');
+        const result = await filterIrrelevantPhotos(
+          photosToUse.map(p => ({
+            id: p.id!,
+            tags: p.tags || [],
+            category: p.category,
+            aestheticScore: p.aestheticScore,
+            ocrText: p.ocrText
+          })),
+          titleToUse || undefined
+        );
+
+        if (result && result.irrelevantPhotoIds && result.irrelevantPhotoIds.length > 0) {
+          const originalCount = photosToUse.length;
+          photosToUse = photosToUse.filter(p => !result.irrelevantPhotoIds.includes(p.id!));
+          console.log(`[AI Relevance Filter] Removed ${originalCount - photosToUse.length} out of context or meaningless photos.`);
+          
+          if (photosToUse.length === 0) {
+            // Fallback to avoid empty book if AI was too aggressive
+            photosToUse = [wizardPreviewPhotos[0]];
+          }
+        }
+      }
+
+      setGenerationStatus(language === 'ko' ? '3D 책장 조판 및 디자인 중...' : 'Binding 3D pages...');
+      let newBook = createPhotobookFromPhotos(photosToUse, {
+        title: titleToUse || undefined,
         theme: selectedTheme,
         storyTone: selectedStoryTone,
         bgmType: selectedBgm,
       });
 
       if (enableAiAutoStory) {
-        newBook = await enhancePhotobookWithAi(newBook, wizardPreviewPhotos);
+        setGenerationStatus(language === 'ko' ? 'AI 감성 스토리 작가 구성 중...' : 'AI Story Synthesis...');
+        newBook = await enhancePhotobookWithAi(newBook, photosToUse);
       }
 
+      setGenerationStatus(language === 'ko' ? '서재에 보관 중...' : 'Storing in library...');
       await savePhotobook(newBook);
       await loadBooks();
       setActiveBook(newBook);
@@ -225,6 +424,7 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
       console.error(e);
     } finally {
       setIsGenerating(false);
+      setGenerationStatus('');
     }
   };
 
@@ -281,7 +481,7 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
         if (bookIdx === -1) continue;
 
         const currentBook = updatedList[bookIdx];
-        const { updatedBook, summary } = await applyAiNarrativeToPhotobook(currentBook);
+        const { updatedBook, summary } = await applyAiNarrativeToPhotobook(currentBook, globalAiTone);
 
         updatedList[bookIdx] = updatedBook;
         lastSummary = summary;
@@ -394,6 +594,111 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
     return items;
   }, [photobooks, timelineBookFilter, selectedBookIds, timelineSortAsc, language]);
 
+  // Group photos into Monthly Albums for Family Album Wide View
+  const monthlyAlbumGroups = useMemo(() => {
+    let source = libraryPhotos.filter(p => !p.isDeleted);
+    
+    // 🔮 Apply AI Relevance Filtering to the Family Album groups if enabled
+    if (isRelevanceFilteringEnabled) {
+      source = source.filter(p => {
+        // Fallback filtering logic based on metadata (same as filterIrrelevantPhotos fallback)
+        const isDocument = p.category?.toLowerCase() === 'document' || p.category?.toLowerCase() === 'receipt';
+        const isLowAesthetic = (p.aestheticScore || 5) < 3.5;
+        const hasIrrelevantTags = (p.tags || []).some(t => 
+          ['screenshot', 'text', 'receipt', 'document', 'form', 'receipt', 'bill', 'note'].includes(t.toLowerCase())
+        );
+        // Only filter if we have some analysis data, otherwise keep it
+        const hasAnalysis = p.status === 'analyzed' || (p.tags && p.tags.length > 0) || p.aestheticScore !== undefined;
+        
+        if (!hasAnalysis) return true;
+        return !(isDocument || isLowAesthetic || hasIrrelevantTags);
+      });
+    }
+
+    if (source.length === 0) {
+      source = generateSamplePhotos();
+    }
+
+    const groupsMap = new Map<string, {
+      year: number;
+      month: number;
+      key: string;
+      label: string;
+      yearLabel: string;
+      photos: PhotoRecord[];
+    }>();
+
+    for (const photo of source) {
+      const time = photo.dateTaken || photo.lastModified || Date.now();
+      const d = new Date(time);
+      const year = d.getFullYear() || 2026;
+      const month = d.getMonth() + 1; // 1-12
+      const key = `${year}-${String(month).padStart(2, '0')}`;
+      const label = `${month}월`;
+      const yearLabel = `${year}년`;
+
+      if (!groupsMap.has(key)) {
+        groupsMap.set(key, {
+          year,
+          month,
+          key,
+          label,
+          yearLabel,
+          photos: [],
+        });
+      }
+      groupsMap.get(key)!.photos.push(photo);
+    }
+
+    // Sort keys descending (most recent month first)
+    const sortedKeys = Array.from(groupsMap.keys()).sort((a, b) => b.localeCompare(a));
+    const result = sortedKeys.map(k => {
+      const grp = groupsMap.get(k)!;
+      // Sort chronologically within month
+      grp.photos.sort((a, b) => (a.dateTaken || a.lastModified || 0) - (b.dateTaken || b.lastModified || 0));
+      return grp;
+    });
+
+    return result;
+  }, [libraryPhotos]);
+
+  // Selected or active monthly group
+  const currentMonthGroup = useMemo(() => {
+    if (monthlyAlbumGroups.length === 0) return null;
+    return monthlyAlbumGroups.find(g => g.key === selectedMonthKey) || monthlyAlbumGroups[0];
+  }, [monthlyAlbumGroups, selectedMonthKey]);
+
+  // Milestone age calculation for selected month / photo
+  const getMilestoneAge = (targetDateMs: number) => {
+    const birth = new Date(childBirthDate).getTime();
+    if (isNaN(birth)) return '0년 6개월';
+    const diffMs = targetDateMs - birth;
+    if (diffMs <= 0) return '출생 0개월';
+    const totalDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const years = Math.floor(totalDays / 365);
+    const months = Math.floor((totalDays % 365) / 30);
+    return `출생일로부터 ${years}년 ${months}개월`;
+  };
+
+  // Group photos of the current month by day
+  const photosByDay = useMemo(() => {
+    if (!currentMonthGroup) return [];
+    const dayMap = new Map<string, PhotoRecord[]>();
+    for (const p of currentMonthGroup.photos) {
+      const time = p.dateTaken || p.lastModified || Date.now();
+      const d = new Date(time);
+      const dayKey = `${d.getMonth() + 1}월 ${d.getDate()}일`;
+      if (!dayMap.has(dayKey)) {
+        dayMap.set(dayKey, []);
+      }
+      dayMap.get(dayKey)!.push(p);
+    }
+    return Array.from(dayMap.entries()).map(([dayLabel, photos]) => ({
+      dayLabel,
+      photos
+    }));
+  }, [currentMonthGroup]);
+
   // Current event album for Chapter Structure Progress Bar
   const currentAlbum = useMemo<PhotobookRecord | null>(() => {
     if (photobooks.length === 0) return null;
@@ -502,10 +807,9 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
     }
   };
 
-  // If a book is currently open in 3D viewer, show the FlipBookViewer
-  if (activeBook) {
-    return (
-      <div className="w-full">
+  return (
+    <div className="w-full">
+      {activeBook ? (
         <FlipBookViewer
           photobook={activeBook}
           onClose={() => {
@@ -525,13 +829,11 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
           initialSpreadIndex={initialViewerSpread}
           isAiNarrativeMode={isAiNarrativeMode}
           onToggleAiNarrativeMode={handleToggleAiNarrativeMode}
+          onAnimatePhoto={onAnimatePhoto}
+          libraryPhotos={libraryPhotos}
         />
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-8">
+      ) : (
+        <div className="space-y-8">
       {/* FLOATING CHAPTER PROGRESS BAR: Shows current event album's chapter structure with 1-click jumps */}
       {currentAlbum && currentChapters.length > 0 && (
         <div className="sticky top-2 sm:top-4 z-40 w-full transition-all duration-300">
@@ -603,6 +905,21 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                 >
                   <BookOpen size={13} />
                   <span>{language === 'ko' ? '3D 플립북 열기' : 'Open FlipBook'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveBook(currentAlbum);
+                    setInitialViewerSpread(0);
+                    setOpenWithTheater(true);
+                    setOpenWithAutoPlay(true);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-rose-600 hover:from-purple-500 hover:to-rose-500 text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shadow-purple-600/30 cursor-pointer border border-purple-400/40"
+                  title={language === 'ko' ? '자동 슬라이드쇼 및 화면 전환 효과가 적용된 극장 모드로 감상' : 'Watch in auto-playing Theater Mode'}
+                >
+                  <Film size={13} className="text-amber-300 animate-pulse" />
+                  <span>{language === 'ko' ? '극장 모드' : 'Theater Mode'}</span>
                 </button>
 
                 <button
@@ -814,12 +1131,102 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
             </p>
 
             <div className="flex flex-wrap items-center gap-3 pt-2">
+              {/* 🧙‍♂️ Beginner Guide Wizard Shortcut */}
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent('open-beginner-wizard'))}
+                className="px-5 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500/20 via-rose-500/15 to-indigo-500/20 hover:from-amber-500/30 hover:to-indigo-500/30 text-amber-200 border border-amber-500/40 font-bold text-sm transition-all shadow-xl shadow-amber-500/10 flex items-center gap-2 cursor-pointer group"
+                title={language === 'ko' ? '어떤 사진첩을 만들지 고민되시나요? 질문 마법사로 맞춤 추천받기' : 'Unsure where to start? Open the beginner guide wizard'}
+              >
+                <HelpCircle size={18} className="text-amber-400 group-hover:scale-110 transition-transform" />
+                <span>{language === 'ko' ? '🧙‍♂️ 초보자 질문 마법사' : '🧙‍♂️ Guide Wizard'}</span>
+              </button>
+
               <button
                 onClick={() => setShowCreateModal(true)}
                 className="px-6 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm transition-all shadow-xl shadow-indigo-600/30 flex items-center gap-2 cursor-pointer group"
               >
                 <Plus size={18} className="group-hover:rotate-90 transition-transform" />
                 <span>{language === 'ko' ? '새 디지털 사진첩 제작' : 'Create New Photobook'}</span>
+              </button>
+
+              {/* 🍼 FamilyAlbum Monthly Wide View Button */}
+              <button
+                type="button"
+                onClick={() => setViewMode('family-album')}
+                className="px-5 py-3.5 rounded-2xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:from-pink-500 hover:to-amber-400 text-white font-bold text-sm transition-all shadow-xl shadow-pink-600/30 flex items-center gap-2 cursor-pointer group border border-pink-400/40"
+                title="패밀리 앨범 스타일 월별 자동 정리 및 와이드 화면으로 감상"
+              >
+                <Baby size={18} className="text-amber-200 group-hover:scale-110 transition-transform" />
+                <span>{language === 'ko' ? '🍼 패밀리 앨범 와이드 뷰' : '🍼 Family Album Wide'}</span>
+              </button>
+
+              {/* 📅 Date Range Quick Auto-Generate Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setPhotoSourceMode('date-range');
+                  setShowCreateModal(true);
+                }}
+                className="px-5 py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-sm transition-all shadow-xl shadow-indigo-600/25 flex items-center gap-2 cursor-pointer group border border-blue-400/30"
+                title={language === 'ko' ? '선택한 특정 날짜 기간의 사진들로 사진첩을 자동 생성합니다' : 'Auto-generate photobook from photos in a chosen date range'}
+              >
+                <Calendar size={18} className="text-amber-300 group-hover:scale-110 transition-transform" />
+                <span>{language === 'ko' ? '기간 지정 사진첩 자동생성' : 'Auto-Create by Date Range'}</span>
+              </button>
+
+              {/* 🎬 Hero Header Theater Mode Slideshow Button */}
+              {photobooks.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetBook = currentAlbum || photobooks[0];
+                    if (targetBook) {
+                      setActiveBook(targetBook);
+                      setOpenWithTheater(true);
+                      setOpenWithAutoPlay(true);
+                    }
+                  }}
+                  className="px-5 py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-rose-600 hover:from-purple-500 hover:to-rose-500 text-white font-bold text-sm transition-all shadow-xl shadow-purple-600/30 flex items-center gap-2 cursor-pointer group border border-purple-400/40"
+                  title={language === 'ko' ? '모든 페이지를 부드러운 화면 전환 효과와 함께 자동 재생하는 극장 모드 실행' : 'Play all pages automatically with smooth transition effects in Theater Mode'}
+                >
+                  <Film size={18} className="text-amber-300 group-hover:scale-110 transition-transform animate-pulse" />
+                  <span>{language === 'ko' ? '🎬 극장 모드 슬라이드쇼' : '🎬 Theater Mode Slideshow'}</span>
+                </button>
+              )}
+
+              {/* 🔮 Persistent Toggle Button: 'AI Relevance Filter' */}
+              <button
+                type="button"
+                onClick={() => setIsRelevanceFilteringEnabled(prev => {
+                  const next = !prev;
+                  if (typeof window !== 'undefined') {
+                    localStorage.setItem('snapclean_ai_relevance_filter', String(next));
+                  }
+                  return next;
+                })}
+                className={`px-5 py-3.5 rounded-2xl font-bold text-sm transition-all flex items-center gap-2.5 cursor-pointer shadow-xl border ${
+                  isRelevanceFilteringEnabled
+                    ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 text-white border-emerald-400/80 shadow-emerald-600/30 ring-2 ring-emerald-400/50'
+                    : 'bg-slate-900/90 text-slate-300 border-white/10 hover:border-white/20 hover:text-white hover:bg-slate-800'
+                }`}
+                title={language === 'ko' 
+                  ? '디지털 북 자동 생성 시 영수증, 스크린샷, 흐릿한 사진 등 무의미한 사진을 AI가 자동으로 제외합니다' 
+                  : 'AI automatically excludes meaningless photos like receipts, screenshots, and blurry shots during auto-generation'}
+              >
+                <Filter size={18} className={isRelevanceFilteringEnabled ? 'text-white' : 'text-slate-400'} />
+                <span>
+                  {isRelevanceFilteringEnabled
+                    ? (language === 'ko' ? 'AI 의미 없는 사진 필터링: 활성' : 'AI Relevance Filter: ON')
+                    : (language === 'ko' ? 'AI 의미 없는 사진 필터링 활성화' : 'Enable AI Relevance Filter')}
+                </span>
+                <div className={`w-8 h-4 rounded-full transition-colors relative flex items-center px-0.5 ml-1 ${
+                  isRelevanceFilteringEnabled ? 'bg-white/40' : 'bg-slate-700'
+                }`}>
+                  <div className={`w-3 h-3 rounded-full transition-transform ${
+                    isRelevanceFilteringEnabled ? 'translate-x-4 bg-white' : 'translate-x-0 bg-slate-400'
+                  }`} />
+                </div>
               </button>
 
               {/* 🔮 Persistent Toggle Button: 'Enable AI Narrative Mode' */}
@@ -873,9 +1280,18 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                   className="px-5 py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white font-semibold text-sm transition-all border border-white/10 flex items-center gap-2 cursor-pointer"
                 >
                   <Layers size={18} className="text-indigo-400" />
-                  <span>{language === 'ko' ? '중복 사진 정리 화면으로' : 'Go to Deduplication'}</span>
+                  <span>{language === 'ko' ? '중복 정리' : 'Deduplication'}</span>
                 </button>
               )}
+
+              {/* ⚙️ AI Settings Panel Toggle */}
+              <button
+                onClick={() => setShowSettingsModal(true)}
+                className="p-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 transition-all cursor-pointer shadow-xl"
+                title={language === 'ko' ? 'AI 감성 톤 설정' : 'AI Tone Settings'}
+              >
+                <Settings size={20} />
+              </button>
             </div>
           </div>
 
@@ -911,23 +1327,45 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                   <BookOpen className="text-indigo-500" />
                   {language === 'ko' ? '나의 디지털 서재 (Photobook Shelf)' : 'My Photobook Shelf'}
                 </>
-              ) : (
+              ) : viewMode === 'timeline' ? (
                 <>
                   <Clock className="text-amber-400" />
                   {language === 'ko' ? '이벤트 타임라인 뷰 (Timeline View)' : 'Event Photos Timeline'}
+                </>
+              ) : (
+                <>
+                  <Baby className="text-pink-400" />
+                  {language === 'ko' ? '패밀리 앨범 월별 와이드 뷰 (Family Album Wide)' : 'Family Album Monthly Wide'}
                 </>
               )}
             </h2>
             <p className="text-xs text-slate-400 mt-1">
               {viewMode === 'shelf'
                 ? (language === 'ko' ? '사진첩을 클릭하면 3D 플립북 책장 넘기기 뷰어가 열립니다.' : 'Click any book to open the realistic 3D page-flip viewer.')
-                : (language === 'ko' ? '선택한 이벤트 사진들이 시간 순서대로 가로 스크롤 타임라인 바에 배치됩니다.' : 'Selected event photos arranged along a horizontal scrolling chronological bar.')}
+                : viewMode === 'timeline'
+                  ? (language === 'ko' ? '선택한 이벤트 사진들이 시간 순서대로 가로 스크롤 타임라인 바에 배치됩니다.' : 'Selected event photos arranged along a horizontal scrolling chronological bar.')
+                  : (language === 'ko' ? '사진과 동영상을 월별로 자동 정리하고, 넓은 와이드 화면으로 감상하는 패밀리 앨범 스크랩북입니다.' : 'Photos and videos automatically organized by month on a spacious wide-screen family scrapbook.')}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* View Mode Switcher: Shelf vs Timeline */}
+            {/* View Mode Switcher: Shelf vs Timeline vs Family Album */}
             <div className="p-1 rounded-2xl bg-slate-900/90 border border-white/10 flex items-center gap-1 shadow-lg">
+              <button
+                type="button"
+                onClick={() => setViewMode('family-album')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  viewMode === 'family-album'
+                    ? 'bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                }`}
+                title="패밀리 앨범 스타일 월별 자동 정리 및 와이드 화면"
+              >
+                <Baby size={14} className={viewMode === 'family-album' ? 'text-amber-200' : ''} />
+                <span>{language === 'ko' ? '패밀리 앨범 와이드' : 'Family Album Wide'}</span>
+                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-amber-400/30 text-amber-200 font-mono">NEW</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setViewMode('shelf')}
@@ -1002,6 +1440,28 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                       : (language === 'ko' ? 'AI 내러티브' : 'AI Narrative')}
                   </span>
                 </button>
+
+                {/* 🔮 Persistent AI Narrative Mode Toggle in Toolbar */}
+                <button
+                  type="button"
+                  onClick={handleToggleAiNarrativeMode}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border ${
+                    isAiNarrativeMode
+                      ? 'bg-gradient-to-r from-purple-600 via-rose-600 to-indigo-600 text-white border-rose-400/80 shadow-md shadow-purple-600/30'
+                      : 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
+                  }`}
+                  title="Enable AI Narrative Mode: 3D 포토북 페이지를 감지하여 챕터 이미지에 맞는 감성 캡션을 실시간 자동 업데이트합니다"
+                >
+                  <Sparkles size={13} className={isAiNarrativeMode ? 'text-amber-300 animate-spin' : 'text-purple-400'} />
+                  <span>Enable AI Narrative Mode</span>
+                  <div className={`w-6 h-3.5 rounded-full transition-colors relative flex items-center px-0.5 ml-0.5 ${
+                    isAiNarrativeMode ? 'bg-amber-400' : 'bg-slate-700'
+                  }`}>
+                    <div className={`w-2.5 h-2.5 rounded-full transition-transform ${
+                      isAiNarrativeMode ? 'translate-x-2.5 bg-slate-950' : 'translate-x-0 bg-slate-400'
+                    }`} />
+                  </div>
+                </button>
               </div>
             )}
           </div>
@@ -1062,9 +1522,15 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                     {book.coverImage && (
                       <div className="absolute inset-0 opacity-25 group-hover:opacity-40 transition-opacity">
                         <img 
-                          src={book.coverImage} 
+                          src={getFallbackPhotoUrl(book.coverImage)} 
                           alt="" 
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
+                          onError={(e) => {
+                            const fb = getFallbackPhotoUrl(book.coverImage);
+                            if (e.currentTarget.src !== fb) {
+                              e.currentTarget.src = fb;
+                            }
+                          }}
                         />
                       </div>
                     )}
@@ -1153,13 +1619,13 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                           e.stopPropagation();
                           setActiveBook(book);
                           setOpenWithTheater(true);
-                          setOpenWithAutoPlay(false);
+                          setOpenWithAutoPlay(true);
                         }}
-                        className="py-1.5 px-2 rounded-xl bg-purple-500/10 hover:bg-purple-600 hover:text-white border border-purple-500/20 text-purple-300 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                        title="전체화면 극장 모드로 바로 감상"
+                        className="py-1.5 px-2 rounded-xl bg-gradient-to-r from-purple-600/30 to-indigo-600/30 hover:from-purple-600 hover:to-indigo-600 hover:text-white border border-purple-500/40 text-purple-200 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                        title="전체화면 극장 모드 및 화면 전환 자동 슬라이드쇼 실행"
                       >
-                        <Film size={12} />
-                        <span>극장 모드</span>
+                        <Film size={12} className="text-amber-300 animate-pulse" />
+                        <span>🎬 극장 모드</span>
                       </button>
 
                       <button
@@ -1181,7 +1647,7 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
               );
             })}
           </div>
-        ) : (
+        ) : viewMode === 'timeline' ? (
           /* NEW TIMELINE VIEW: Horizontal Scrolling Chronological Bar */
           <div className="space-y-4">
             {/* Timeline Filter & Control Bar */}
@@ -1581,6 +2047,370 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
               </div>
             )}
           </div>
+        ) : (
+          /* 🍼 FAMILY ALBUM MONTHLY WIDE VIEW (패밀리 앨범 스타일 월별 와이드 뷰) */
+          <div className="space-y-6">
+            {/* 1. Monthly Selector Bar */}
+            <div className="bg-slate-900/90 backdrop-blur-xl border border-white/10 rounded-2xl p-3 sm:p-4 shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/10">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-pink-500/20 border border-pink-500/30 text-pink-300 text-xs font-bold font-mono">
+                    <Baby size={14} className="text-pink-400" />
+                    <span>{currentMonthGroup?.yearLabel || '2026년'}</span>
+                  </div>
+
+                  <span className="text-xs text-slate-400 hidden md:inline">
+                    {language === 'ko' ? '← 사진과 동영상을 월별로 자동 정리!' : '← Photos & videos auto-organized by month!'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 text-xs font-mono">
+                  <span className="text-slate-400">
+                    {currentMonthGroup ? `${currentMonthGroup.label} 총 ${currentMonthGroup.photos.length}장의 사진` : ''}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowMilestoneSettings(!showMilestoneSettings)}
+                    className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-all cursor-pointer flex items-center gap-1 text-[11px]"
+                    title="월령 및 아기/가족 기념일 설정"
+                  >
+                    <Settings size={13} className="text-amber-400" />
+                    <span>월령 설정</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Milestone Quick Settings Popover */}
+              {showMilestoneSettings && (
+                <div className="mt-3 p-3.5 rounded-xl bg-slate-950 border border-pink-500/30 flex flex-wrap items-center gap-4 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400">대상/이름:</span>
+                    <input
+                      type="text"
+                      value={childMilestoneName}
+                      onChange={(e) => {
+                        setChildMilestoneName(e.target.value);
+                        localStorage.setItem('snapclean_child_name', e.target.value);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-900 border border-white/10 text-white font-bold w-24 focus:outline-none focus:border-pink-500"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400">출생일/기념일:</span>
+                    <input
+                      type="date"
+                      value={childBirthDate}
+                      onChange={(e) => {
+                        setChildBirthDate(e.target.value);
+                        localStorage.setItem('snapclean_child_birth', e.target.value);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-900 border border-white/10 text-white font-mono text-xs focus:outline-none focus:border-pink-500"
+                    />
+                  </div>
+                  <span className="text-[11px] text-pink-300 font-mono">
+                    현재 표시: {getMilestoneAge(currentMonthGroup?.photos[0]?.dateTaken || currentMonthGroup?.photos[0]?.lastModified || Date.now())}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowMilestoneSettings(false)}
+                    className="ml-auto px-3 py-1 rounded-lg bg-pink-600 hover:bg-pink-500 text-white font-bold text-xs cursor-pointer"
+                  >
+                    확인
+                  </button>
+                </div>
+              )}
+
+              {/* Horizontal Month Tabs */}
+              <div className="flex items-center gap-2 overflow-x-auto pt-3 pb-1 custom-scrollbar select-none">
+                {monthlyAlbumGroups.map((grp) => {
+                  const isSelected = (currentMonthGroup?.key === grp.key);
+                  return (
+                    <button
+                      key={grp.key}
+                      type="button"
+                      onClick={() => {
+                        setSelectedMonthKey(grp.key);
+                        setHeroPhotoIndex(0);
+                      }}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer relative ${
+                        isSelected
+                          ? 'bg-gradient-to-r from-pink-600 to-rose-500 text-white shadow-lg shadow-pink-600/30 scale-105'
+                          : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span>{grp.label}</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                        isSelected ? 'bg-white/20 text-white' : 'bg-black/30 text-slate-500'
+                      }`}>
+                        {grp.photos.length}
+                      </span>
+                      {isSelected && (
+                        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-6 h-1 rounded-full bg-amber-300" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 2. Main Scrapbook Canvas (Ivory paper style with cute stickers & wide screen layout) */}
+            <div className="bg-[#faf7f2] dark:bg-slate-950/95 border border-amber-900/10 dark:border-white/10 rounded-3xl p-4 sm:p-8 shadow-2xl relative overflow-hidden">
+              {/* Background delicate grid texture */}
+              <div className="absolute inset-0 opacity-[0.03] dark:opacity-5 bg-[radial-gradient(#000000_1px,transparent_1px)] dark:bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:20px_20px] pointer-events-none" />
+
+              <div className="relative z-10 max-w-4xl mx-auto space-y-8">
+                {/* Hero Featured Photo Card */}
+                {(() => {
+                  const monthPhotos = currentMonthGroup?.photos || [];
+                  const heroPhoto = monthPhotos[heroPhotoIndex % Math.max(1, monthPhotos.length)] || monthPhotos[0];
+                  if (!heroPhoto) return null;
+
+                  return (
+                    <div className="relative">
+                      {/* Sticker Note Above Hero */}
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-pink-100 dark:bg-pink-950/50 border border-pink-300/60 dark:border-pink-500/40 text-pink-700 dark:text-pink-300 text-xs font-bold shadow-xs">
+                          <span>너무~ 맘에 들어 🥰</span>
+                        </div>
+
+                        {/* Randomize Hero Button with Arrow annotation */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (currentMonthGroup && currentMonthGroup.photos.length > 1) {
+                              setHeroPhotoIndex(prev => prev + 1);
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border border-black/10 dark:border-white/10 text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer group"
+                          title="다른 사진으로 대표 컷 랜덤 변경"
+                        >
+                          <Shuffle size={13} className="text-pink-500 group-hover:rotate-180 transition-transform duration-500" />
+                          <span>← 랜덤으로 변경!</span>
+                        </button>
+                      </div>
+
+                      {/* Big Hero Card */}
+                      <div className="relative w-full aspect-[4/5] sm:aspect-[4/3] rounded-3xl overflow-hidden shadow-2xl border-4 border-white dark:border-slate-800 group">
+                        <BookPhotoView
+                          photo={heroPhoto as any}
+                          className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-700"
+                        />
+
+                        {/* Gradient Vignette Overlay */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-black/35 flex flex-col justify-between p-5 sm:p-8" />
+
+                        {/* Overlay: Month Title (like "September 2022") */}
+                        <div className="absolute top-6 left-6 z-10">
+                          <span className="font-serif italic text-2xl sm:text-4xl text-white font-bold tracking-tight drop-shadow-lg">
+                            {monthEnNames[((currentMonthGroup?.month || 10) - 1)]} {currentMonthGroup?.year || 2026}
+                          </span>
+                          <p className="text-white/80 text-xs sm:text-sm font-sans mt-0.5 drop-shadow">
+                            {currentMonthGroup?.label} 베스트 메모리 컬렉션
+                          </p>
+                        </div>
+
+                        {/* Overlay Bottom: Milestone Age Badge */}
+                        <div className="absolute bottom-6 left-6 right-6 z-10 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                          <div className="space-y-1.5">
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/90 dark:bg-slate-900/90 backdrop-blur-md text-slate-900 dark:text-white text-xs font-bold shadow-md">
+                              <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse" />
+                              <span>월령 표시: {childMilestoneName}, {getMilestoneAge(heroPhoto.dateTaken || heroPhoto.lastModified || Date.now())}</span>
+                            </div>
+                            {heroPhoto.description && (
+                              <p className="text-white text-sm font-medium italic drop-shadow max-w-lg line-clamp-2">
+                                "{heroPhoto.description}"
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Quick Action in Card */}
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const syntheticBook = createPhotobookFromPhotos(currentMonthGroup?.photos || [heroPhoto], {
+                                  title: `${currentMonthGroup?.yearLabel} ${currentMonthGroup?.label} 패밀리 앨범`,
+                                  theme: 'classic-hardcover',
+                                  storyTone: 'family',
+                                  bgmType: 'summer-breeze',
+                                });
+                                setActiveBook(syntheticBook);
+                                setOpenWithTheater(false);
+                              }}
+                              className="px-4 py-2.5 rounded-xl bg-pink-600 hover:bg-pink-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-pink-600/30 cursor-pointer transition-all"
+                            >
+                              <BookOpen size={14} />
+                              <span>3D 포토북으로 감상</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 3. Chronological Photos & Videos Grid */}
+                <div className="space-y-6 pt-4">
+                  <div className="flex items-center justify-between border-b border-black/10 dark:border-white/10 pb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <Calendar size={16} className="text-pink-500" />
+                        <span>날짜 순으로 자동 정렬</span>
+                      </span>
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
+                        ({currentMonthGroup?.photos.length || 0}개 컷)
+                      </span>
+                    </div>
+
+                    <div className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-500 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-0.5 rounded-full border border-rose-200 dark:border-rose-900/50">
+                      <span>지난 추억 회상 😍</span>
+                    </div>
+                  </div>
+
+                  {/* Day by Day Grouping */}
+                  {photosByDay.map(({ dayLabel, photos }) => (
+                    <div key={dayLabel} className="space-y-3">
+                      <div className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300">
+                        <span className="w-1.5 h-1.5 rounded-full bg-pink-500" />
+                        <span>{dayLabel}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">({photos.length}장)</span>
+                      </div>
+
+                      {/* Wide-screen Grid: 2 cols on mobile, 4 on desktop - NO SQUISHED COLUMNS */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
+                        {photos.map((p, pIdx) => {
+                          const isLiked = p.id ? likedFamilyPhotos.has(p.id) : false;
+                          const isVideo = p.type?.includes('video');
+
+                          return (
+                            <div
+                              key={p.id || pIdx}
+                              onClick={() => {
+                                setPreviewPhotoModal({
+                                  photo: {
+                                    id: `photo-${p.id || pIdx}`,
+                                    photoId: p.id || pIdx,
+                                    path: p.path,
+                                    caption: p.description || p.locationName || `${dayLabel} 추억`,
+                                    date: new Date(p.dateTaken || p.lastModified || Date.now()).toLocaleDateString(),
+                                    location: p.locationName,
+                                    aestheticScore: p.aestheticScore,
+                                  },
+                                  book: photobooks[0] || ({} as any),
+                                  pageNumber: 1,
+                                  spreadIndex: 1,
+                                  dateFormatted: dayLabel,
+                                });
+                              }}
+                              className="group relative aspect-square rounded-2xl overflow-hidden shadow-md bg-slate-200 dark:bg-slate-800 cursor-pointer border-2 border-white dark:border-slate-700 hover:shadow-xl hover:scale-[1.02] transition-all"
+                            >
+                              <BookPhotoView
+                                photo={p as any}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                              />
+
+                              {/* Top Bar Badges */}
+                              <div className="absolute top-2 left-2 right-2 flex justify-between items-center z-10 pointer-events-none">
+                                {isVideo ? (
+                                  <div className="p-1 rounded-md bg-black/60 backdrop-blur-md text-amber-300 shadow">
+                                    <Play size={10} className="fill-current" />
+                                  </div>
+                                ) : (
+                                  <div />
+                                )}
+
+                                {/* Like Heart Button */}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (p.id) {
+                                      setLikedFamilyPhotos(prev => {
+                                        const next = new Set(prev);
+                                        if (next.has(p.id!)) next.delete(p.id!);
+                                        else next.add(p.id!);
+                                        return next;
+                                      });
+                                    }
+                                  }}
+                                  className={`p-1.5 rounded-full backdrop-blur-md pointer-events-auto transition-all ${
+                                    isLiked ? 'bg-pink-500 text-white scale-110' : 'bg-black/40 text-white/80 hover:text-white'
+                                  }`}
+                                >
+                                  <Heart size={11} className={isLiked ? 'fill-current' : ''} />
+                                </button>
+                              </div>
+
+                              {/* Hover / Tap Bottom Info */}
+                              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-2 sm:p-2.5 text-white flex items-center justify-between">
+                                <span className="text-[10px] truncate max-w-[80%] font-medium">
+                                  {p.locationName || p.description || `${dayLabel}`}
+                                </span>
+                                <div className="flex items-center gap-1 text-[9px] text-pink-300">
+                                  <MessageCircle size={10} />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 4. Cute Illustration & Scrapbook Quote Footer */}
+                <div className="pt-6 border-t border-black/10 dark:border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  {/* Pink Speech Bubble */}
+                  <div className="inline-flex items-center gap-2 p-3.5 rounded-2xl bg-pink-100/80 dark:bg-pink-950/40 border border-pink-300/50 dark:border-pink-500/30 text-pink-900 dark:text-pink-200 text-xs font-medium shadow-sm">
+                    <span className="text-base">👧</span>
+                    <span>"너무 편리해서 패밀리 앨범만 자꾸 보게 돼요~"</span>
+                  </div>
+
+                  {/* Fast Action Buttons */}
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetPhotos = currentMonthGroup?.photos || [];
+                        if (targetPhotos.length === 0) return;
+                        const syntheticBook = createPhotobookFromPhotos(targetPhotos, {
+                          title: `${currentMonthGroup?.yearLabel} ${currentMonthGroup?.label} 패밀리 앨범`,
+                          theme: 'classic-hardcover',
+                          storyTone: 'family',
+                          bgmType: 'summer-breeze',
+                        });
+                        setActiveBook(syntheticBook);
+                        setOpenWithTheater(true);
+                        setOpenWithAutoPlay(true);
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
+                    >
+                      <Film size={14} className="text-amber-300 animate-pulse" />
+                      <span>🎬 이 달의 극장 슬라이드쇼</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleGenerateAiNarrative(photobooks.map(b => b.id));
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-white text-xs font-bold flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
+                    >
+                      <Sparkles size={14} className="text-amber-200" />
+                      <span>✨ AI 감성 스토리 작성</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Subtitle tag matching the ad */}
+                <div className="text-center pt-2">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                    용량 무제한 영구 무료 • 패밀리 앨범 스타일 월별 자동 정리 • 육아 및 소중한 추억 필수 앱
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
 
@@ -1775,8 +2605,28 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
 
                 {/* 3. Photo Source Selection & 3-Axis Smart Clustering */}
                 <div className="space-y-2">
+                  <div className="flex items-center justify-between bg-gradient-to-r from-indigo-950/80 to-slate-900 border border-indigo-500/40 p-3 rounded-2xl mb-2">
+                    <div className="flex items-center gap-2">
+                      <ImageIcon size={16} className="text-amber-400" />
+                      <span className="text-xs text-slate-200 font-bold">
+                        {libraryPhotos.filter(p => !p.isDeleted).length > 0 
+                          ? (language === 'ko' ? `내 보관함 사진: 총 ${libraryPhotos.filter(p => !p.isDeleted).length}장 감지됨` : `Library Photos: ${libraryPhotos.filter(p => !p.isDeleted).length} detected`)
+                          : (language === 'ko' ? '보관함이 비어있습니다. 내 PC/스마트폰 사진을 즉시 선택해 보세요!' : 'Library is empty. Select your local photo files directly!')}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleImportDirectPhotos}
+                      disabled={isImportingDirectPhotos}
+                      className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer disabled:opacity-50 shrink-0"
+                    >
+                      <Plus size={13} />
+                      <span>{isImportingDirectPhotos ? (language === 'ko' ? '사진 처리 중...' : 'Importing...') : (language === 'ko' ? '📁 내 사진 파일 추가' : '📁 Add My Photos')}</span>
+                    </button>
+                  </div>
+
                   <label className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
-                    <span>{language === 'ko' ? '3. 사진 선별 & 3축 지능형 챕터 분할' : '3. Photo Curation & Chapter Clustering'}</span>
+                    <span>{language === 'ko' ? '사진 선별 & 3축 지능형 챕터 분할' : 'Photo Curation & Chapter Clustering'}</span>
                     <span className="text-[10px] font-mono text-indigo-400 font-bold">
                       {wizardPreviewPhotos.length}장 선별 대상
                     </span>
@@ -1789,19 +2639,24 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                         desc: language === 'ko' ? '3시간 시차 / 5km 거리 기준 서사적 챕터 분할 (추천)' : '3h burst & 5km location clusters'
                       },
                       { 
+                        id: 'date-range', 
+                        label: language === 'ko' ? '📅 기간 지정 자동 생성 (Date Range)' : 'Custom Date Range Auto-Create',
+                        desc: language === 'ko' ? '선택한 시작일~종료일 범위의 사진만 모아서 사진첩 제작' : 'Collect photos from selected start to end date'
+                      },
+                      { 
                         id: 'best-shots', 
                         label: language === 'ko' ? '✨ 고화질 베스트 컷 (Aesthetic Top 24)' : 'Aesthetic Top 24 Best Shots',
                         desc: language === 'ko' ? 'AI 미적 점수 최고점 사진만 엄선' : 'Highest AI aesthetic scores'
                       },
                       { 
+                        id: 'manual', 
+                        label: language === 'ko' ? '🖱️ 직접 사진 선택 (Manual Selection)' : 'Manual Photo Selection',
+                        desc: language === 'ko' ? '사진첩에 넣을 사진을 직접 골라보세요' : 'Pick exactly which photos to include'
+                      },
+                      { 
                         id: 'recent', 
                         label: language === 'ko' ? '📅 최신 촬영 사진 순' : 'Recent Photos Chronological',
                         desc: language === 'ko' ? '가장 최근에 담긴 기억 위주로 조판' : 'Latest photo sequence'
-                      },
-                      { 
-                        id: 'all', 
-                        label: language === 'ko' ? '📂 전체 보관함 사진 균형 조판' : 'Balanced Full Library',
-                        desc: language === 'ko' ? '보관함의 모든 사진을 골고루 분배' : 'Distribute across full archive'
                       },
                     ].map((src) => (
                       <button
@@ -1824,6 +2679,160 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                       </button>
                     ))}
                   </div>
+
+                  {/* Date Range Selection Panel */}
+                  {photoSourceMode === 'date-range' && (
+                    <div className="mt-4 p-4 rounded-2xl bg-slate-950 border border-indigo-500/40 space-y-4 shadow-lg animate-fade-in">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                          <Calendar size={14} className="text-amber-400" />
+                          {language === 'ko' ? '기간 지정 필터 설정 (Date Range Filter)' : 'Select Date Range'}
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                          {wizardPreviewPhotos.length} {language === 'ko' ? '장 감지됨' : 'photos detected'}
+                        </span>
+                      </div>
+
+                      {/* Quick Presets */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { label: language === 'ko' ? '최근 1개월' : 'Last 1 Mo', months: 1 },
+                          { label: language === 'ko' ? '최근 3개월' : 'Last 3 Mos', months: 3 },
+                          { label: language === 'ko' ? '최근 6개월' : 'Last 6 Mos', months: 6 },
+                          { label: language === 'ko' ? '올해 (2026)' : 'This Year (2026)', year: 2026 },
+                          { label: language === 'ko' ? '작년 (2025)' : 'Last Year (2025)', year: 2025 },
+                          { label: language === 'ko' ? '전체 기간' : 'All Time', all: true },
+                        ].map((preset, pIdx) => (
+                          <button
+                            key={pIdx}
+                            type="button"
+                            onClick={() => {
+                              const today = new Date();
+                              if (preset.all) {
+                                setStartDate('2020-01-01');
+                                setEndDate(today.toISOString().split('T')[0]);
+                              } else if (preset.year) {
+                                setStartDate(`${preset.year}-01-01`);
+                                setEndDate(`${preset.year}-12-31`);
+                              } else if (preset.months) {
+                                const start = new Date();
+                                start.setMonth(start.getMonth() - preset.months);
+                                setStartDate(start.toISOString().split('T')[0]);
+                                setEndDate(today.toISOString().split('T')[0]);
+                              }
+                            }}
+                            className="px-2.5 py-1 text-[11px] rounded-lg bg-white/5 hover:bg-indigo-600/30 text-slate-300 hover:text-white border border-white/10 hover:border-indigo-500/50 transition-all font-mono cursor-pointer"
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Date Pickers */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] text-slate-400 font-bold block mb-1">
+                            {language === 'ko' ? '시작일 (Start Date)' : 'Start Date'}
+                          </label>
+                          <input
+                            type="date"
+                            value={startDate}
+                            onChange={(e) => setStartDate(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white font-mono focus:outline-hidden focus:border-indigo-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-slate-400 font-bold block mb-1">
+                            {language === 'ko' ? '종료일 (End Date)' : 'End Date'}
+                          </label>
+                          <input
+                            type="date"
+                            value={endDate}
+                            onChange={(e) => setEndDate(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white font-mono focus:outline-hidden focus:border-indigo-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Live Matched Photos Preview */}
+                      {wizardPreviewPhotos.length > 0 && (
+                        <div className="space-y-1.5 pt-2 border-t border-white/5">
+                          <span className="text-[10px] text-slate-400 block font-mono">
+                            {language === 'ko' ? `선택 기간 (${startDate} ~ ${endDate}) 감지된 사진:` : `Photos in selected range (${startDate} ~ ${endDate}):`}
+                          </span>
+                          <div className="flex gap-2 overflow-x-auto py-1 no-scrollbar">
+                            {wizardPreviewPhotos.slice(0, 15).map((photo, idx) => (
+                              <div key={photo.id || idx} className="w-12 h-12 rounded-lg overflow-hidden bg-slate-900 shrink-0 border border-white/10 relative">
+                                <BookPhotoView photo={{ path: photo.path }} className="w-full h-full object-cover" />
+                              </div>
+                            ))}
+                            {wizardPreviewPhotos.length > 15 && (
+                              <div className="w-12 h-12 rounded-lg bg-indigo-950/80 border border-indigo-500/30 flex items-center justify-center text-[10px] font-mono text-indigo-300 font-bold shrink-0">
+                                +{wizardPreviewPhotos.length - 15}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Manual Selection Grid */}
+                  {photoSourceMode === 'manual' && (
+                    <div className="mt-4 p-4 rounded-2xl bg-slate-950 border border-white/10 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-300 uppercase tracking-widest">
+                          {language === 'ko' ? '사진 직접 선택' : 'Select Photos Manually'} ({selectedManualPhotoIds.size}장 선택됨)
+                        </span>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedManualPhotoIds(new Set(libraryPhotos.filter(p => !p.isDeleted).map(p => p.id as number)))}
+                            className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold"
+                          >
+                            {language === 'ko' ? '전체 선택' : 'Select All'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedManualPhotoIds(new Set())}
+                            className="text-[10px] text-slate-500 hover:text-slate-400 font-bold"
+                          >
+                            {language === 'ko' ? '전체 해제' : 'Clear All'}
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+                        {libraryPhotos.filter(p => !p.isDeleted).map((photo) => {
+                          const isSelected = photo.id && selectedManualPhotoIds.has(photo.id);
+                          return (
+                            <div 
+                              key={photo.id}
+                              onClick={() => {
+                                if (!photo.id) return;
+                                const next = new Set(selectedManualPhotoIds);
+                                if (next.has(photo.id)) next.delete(photo.id);
+                                else next.add(photo.id);
+                                setSelectedManualPhotoIds(next);
+                              }}
+                              className={`aspect-square rounded-lg overflow-hidden relative cursor-pointer border-2 transition-all ${
+                                isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-transparent opacity-60 hover:opacity-100'
+                              }`}
+                            >
+                              <BookPhotoView photo={{ path: photo.path }} className="w-full h-full object-cover" />
+                              {isSelected && (
+                                <div className="absolute inset-0 bg-indigo-600/20 flex items-center justify-center">
+                                  <div className="bg-indigo-500 text-white rounded-full p-0.5 shadow-lg">
+                                    <Check size={12} strokeWidth={3} />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 4. Live Chapter Preview (실시간 예상 챕터 구성) */}
@@ -1942,6 +2951,32 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                     className="w-5 h-5 accent-indigo-600 rounded cursor-pointer shrink-0 ml-3"
                   />
                 </div>
+
+                {/* 8. AI Relevance Filtering Toggle */}
+                <div className="p-3.5 rounded-2xl bg-amber-950/20 border border-amber-500/30 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-amber-600/20 text-amber-400 shrink-0">
+                      <Filter size={16} />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-white">
+                        {language === 'ko' ? 'AI 연관성 필터링 (불필요한 사진 제외)' : 'AI Relevance Filtering'}
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        {language === 'ko' ? '영수증, 스크린샷, 흔들린 사진 등 의미 없는 컷을 AI가 자동 제외합니다.' : 'AI removes screenshots, receipts, and low-quality irrelevant photos.'}
+                      </div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={isRelevanceFilteringEnabled}
+                    onChange={(e) => {
+                      setIsRelevanceFilteringEnabled(e.target.checked);
+                      localStorage.setItem('snapclean_ai_relevance_filter', String(e.target.checked));
+                    }}
+                    className="w-5 h-5 accent-amber-600 rounded cursor-pointer shrink-0 ml-3"
+                  />
+                </div>
               </div>
 
               {/* Footer Actions */}
@@ -1962,7 +2997,7 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                   <Sparkles size={14} className={isGenerating ? "animate-spin" : ""} />
                   <span>
                     {isGenerating 
-                      ? (language === 'ko' ? '사진첩 조판 중...' : 'Binding Pages...') 
+                      ? (generationStatus || (language === 'ko' ? '사진첩 조판 중...' : 'Binding Pages...')) 
                       : (language === 'ko' ? '사진첩 생성 및 펼치기' : 'Create & Open Book')}
                   </span>
                 </button>
@@ -2064,6 +3099,116 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
           </div>
         )}
       </AnimatePresence>
+      {/* ⚙️ AI Preference Settings Modal */}
+      <AnimatePresence>
+        {showSettingsModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-slate-900 border border-white/10 rounded-3xl max-w-lg w-full p-6 md:p-8 shadow-2xl space-y-6"
+            >
+              <div className="flex justify-between items-center pb-4 border-b border-white/10">
+                <div className="flex items-center gap-2.5">
+                  <Settings className="text-indigo-400" size={24} />
+                  <h3 className="text-xl font-black text-white italic uppercase tracking-tight">
+                    {language === 'ko' ? 'AI 시스템 설정' : 'AI System Settings'}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setShowSettingsModal(false)}
+                  className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                {/* Emotional Tone Selection */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                      <Sparkles size={16} className="text-amber-400" />
+                      {language === 'ko' ? 'AI 감성 톤 설정 (Global)' : 'Global AI Emotional Tone'}
+                    </label>
+                    <span className="text-[10px] text-indigo-400 font-mono font-bold uppercase bg-indigo-500/10 px-2 py-0.5 rounded">
+                      {globalAiTone}
+                    </span>
+                  </div>
+                  
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    {language === 'ko' 
+                      ? 'AI가 사진첩의 요약과 캡션을 작성할 때 사용할 기본 문체를 선택합니다. 이 설정은 모든 신규 생성 및 일괄 내러티브 생성 시 적용됩니다.' 
+                      : 'Choose the default style the AI uses for summaries and captions. This applies to all new books and batch narrative updates.'}
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-2.5 max-h-[350px] overflow-y-auto pr-1 custom-scrollbar">
+                    {STORY_TONES.map((tone) => {
+                      const isSelected = globalAiTone === tone.id;
+                      return (
+                        <button
+                          key={tone.id}
+                          type="button"
+                          onClick={() => handleUpdateGlobalTone(tone.id)}
+                          className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between h-full ${
+                            isSelected
+                              ? 'bg-indigo-950/60 border-indigo-500 text-white ring-1 ring-indigo-500/50'
+                              : 'bg-slate-950/70 border-white/5 hover:border-white/20 text-slate-400'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2 font-bold text-[11px]">
+                              {tone.id === 'lyrical' && <Feather size={12} className="text-amber-400" />}
+                              {tone.id === 'nostalgic' && <History size={12} className="text-amber-400" />}
+                              {tone.id === 'professional' && <Briefcase size={12} className="text-blue-400" />}
+                              {tone.id === 'cinematic' && <Film size={12} className="text-rose-400" />}
+                              {tone.id === 'minimalist' && <Square size={12} className="text-emerald-400" />}
+                              {tone.id === 'travel' && <Compass size={12} className="text-blue-400" />}
+                              {tone.id === 'family' && <Heart size={12} className="text-rose-400" />}
+                              {tone.id === 'minimal' && <Sparkles size={12} className="text-emerald-400" />}
+                              <span>{language === 'ko' ? tone.labelKo : tone.labelEn}</span>
+                            </div>
+                            {isSelected && <CheckCircle2 size={12} className="text-indigo-400" />}
+                          </div>
+                          <p className="text-[9px] opacity-70 line-clamp-2 leading-snug">
+                            {language === 'ko' ? tone.descKo : (tone as any).descEn || tone.descKo}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Additional Settings Hint */}
+                <div className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/10">
+                  <h4 className="text-[11px] font-bold text-indigo-300 uppercase tracking-widest flex items-center gap-1.5 mb-1">
+                    <Wand2 size={12} />
+                    AI Optimization
+                  </h4>
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    {language === 'ko'
+                      ? '선택된 톤에 따라 AI는 캡션의 길이, 사용되는 어휘, 그리고 이야기의 극적 구성을 자동으로 조절합니다.'
+                      : 'Depending on the selected tone, the AI automatically adjusts caption length, vocabulary, and narrative arc.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-white/10 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsModal(false)}
+                  className="px-8 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-600/30 cursor-pointer"
+                >
+                  {language === 'ko' ? '설정 완료' : 'Save & Close'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      </div>
+      )}
     </div>
   );
 };

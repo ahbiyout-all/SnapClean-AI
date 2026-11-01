@@ -9,6 +9,7 @@ import { MemoryGuardian } from '../services/memoryGuardian';
 import { useI18n } from '../i18n/context';
 import { backgroundSyncManager, BackgroundSyncConfig, SyncFrequency } from '../services/backgroundSyncManager';
 import { libraryManager, DedupeOptions, DEFAULT_DEDUPE_OPTIONS, DedupeRule } from '../services/PhotoLibraryManager';
+import { DedupeEngine } from '../services/dedupeEngine';
 import { dbBatchEngine } from '../services/dbBatchEngine';
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, defaultValue: T): Promise<T> {
@@ -1198,15 +1199,11 @@ export function useScanner(
     const activeOriginalHandling = originalHandlingMode || originalHandling;
     const allToDelete: any[] = [];
     for (const group of targets) {
-      const sorted = [...group.photos].sort((a, b) => {
-        if (autoResolveRule === 'sharpest') return (b.aiScore || 0) - (a.aiScore || 0);
-        if (autoResolveRule === 'largest') return (b.size || 0) - (a.size || 0);
-        const timeB = (b as any).dateTaken || b.lastModified || (b as any).date ? new Date((b as any).date || (b as any).dateTaken || b.lastModified).getTime() : 0;
-        const timeA = (a as any).dateTaken || a.lastModified || (a as any).date ? new Date((a as any).date || (a as any).dateTaken || a.lastModified).getTime() : 0;
-        if (autoResolveRule === 'newest') return timeB - timeA;
-        return timeA - timeB;
-      });
-      const remove = activeOriginalHandling === 'process' ? sorted : sorted.slice(1);
+      if (!group.photos || group.photos.length === 0) continue;
+      const best = DedupeEngine.getBestPhoto(group.photos, autoResolveRule);
+      const remove = activeOriginalHandling === 'process' 
+        ? group.photos 
+        : group.photos.filter(p => p.id !== best.id);
       allToDelete.push(...remove);
     }
 
@@ -1250,17 +1247,11 @@ export function useScanner(
       const allPathsToMove: { source: string, targetName: string }[] = [];
       
       for (const group of targets) {
-        // According to autoResolveRule, pick the best one to keep, others to move
-        const sorted = [...group.photos].sort((a, b) => {
-          if (autoResolveRule === 'sharpest') return (b.aiScore || 0) - (a.aiScore || 0);
-          if (autoResolveRule === 'largest') return (b.size || 0) - (a.size || 0);
-          const timeB = (b as any).dateTaken || b.lastModified || (b as any).date ? new Date((b as any).date || (b as any).dateTaken || b.lastModified).getTime() : 0;
-          const timeA = (a as any).dateTaken || a.lastModified || (a as any).date ? new Date((a as any).date || (a as any).dateTaken || a.lastModified).getTime() : 0;
-          if (autoResolveRule === 'newest') return timeB - timeA;
-          return timeA - timeB;
-        });
-        
-        const toMove = activeOriginalHandling === 'process' ? sorted : sorted.slice(1);
+        if (!group.photos || group.photos.length === 0) continue;
+        const best = DedupeEngine.getBestPhoto(group.photos, autoResolveRule);
+        const toMove = activeOriginalHandling === 'process' 
+          ? group.photos 
+          : group.photos.filter(p => p.id !== best.id);
         toMove.forEach(p => {
           const fileName = p.path.split('/').pop() || 'unknown';
           allPathsToMove.push({

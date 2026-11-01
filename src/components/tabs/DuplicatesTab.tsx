@@ -39,13 +39,17 @@ import {
   Square,
   Sparkle,
   BookOpen,
+  Flame,
+  HelpCircle,
 } from "lucide-react";
 import { DedupeGroup } from "../../services/dedupeEngine";
+import { PhotoRecord } from "../../services/db";
 import { useI18n } from "../../i18n/context";
 import { DuplicateGroup, DuplicateViewMode } from "../DuplicateGroup";
 import { PhotoInspectionModal } from "../PhotoInspectionModal";
 import { Tooltip, InfoTooltip } from "../Tooltip";
 import { VirtualGrid } from "../VirtualGrid";
+import { FolderDuplicateHeatmap } from "../FolderDuplicateHeatmap";
 import { AnimatePresence } from "motion/react";
 import { DirectoryNode } from "../DirectoryTree";
 import { SystemAPI } from "../../services/systemApi";
@@ -54,6 +58,7 @@ import {
   DEFAULT_DEDUPE_OPTIONS,
   DedupeRule,
 } from "../../services/PhotoLibraryManager";
+import { SmartDuplicateSelector } from "../../services/smartDuplicateSelector";
 
 interface DuplicatesTabProps {
   type?: "exact" | "similar";
@@ -97,6 +102,7 @@ interface DuplicatesTabProps {
   setDedupeOptions?: React.Dispatch<React.SetStateAction<DedupeOptions>>;
   onRescanDuplicates?: (opts?: Partial<DedupeOptions>) => Promise<void>;
   onCreatePhotobook?: () => void;
+  onAnimatePhoto?: (photo: PhotoRecord) => void;
 }
 
 export const DuplicatesTab = ({
@@ -125,6 +131,7 @@ export const DuplicatesTab = ({
   dedupeOptions,
   setDedupeOptions,
   onRescanDuplicates,
+  onAnimatePhoto,
 }: DuplicatesTabProps) => {
   const { t, language } = useI18n();
   const [localOriginalHandling, setLocalOriginalHandling] = useState<
@@ -339,9 +346,19 @@ export const DuplicatesTab = ({
 
   const [searchQuery, setSearchQuery] = useState("");
   const [displayCount, setDisplayCount] = useState(25);
+  const [heatmapFolderFilter, setHeatmapFolderFilter] = useState<string | null>(null);
+  const [showHeatmap, setShowHeatmap] = useState(true);
 
   const filteredGroups = useMemo(() => {
     return sortedGroups.filter((g) => {
+      if (heatmapFolderFilter) {
+        const normFilter = heatmapFolderFilter.toLowerCase().replace(/\\/g, '/');
+        const matchesFolder = g.photos.some((p) =>
+          p.path?.toLowerCase().replace(/\\/g, '/').includes(normFilter)
+        );
+        if (!matchesFolder) return false;
+      }
+
       if (subTypeFilter === "exact")
         return g.type === "exact" || g.subType === "exact_byte";
       if (subTypeFilter === "visual")
@@ -368,7 +385,7 @@ export const DuplicatesTab = ({
 
       return g.type === currentType;
     });
-  }, [sortedGroups, currentType, subTypeFilter]);
+  }, [sortedGroups, currentType, subTypeFilter, heatmapFolderFilter]);
 
   const searchedGroups = useMemo(() => {
     if (!searchQuery.trim()) return filteredGroups;
@@ -458,15 +475,26 @@ export const DuplicatesTab = ({
             </p>
           </div>
         </div>
-        {onCreatePhotobook && (
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
           <button
-            onClick={onCreatePhotobook}
-            className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition-all shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("open-beginner-wizard"))}
+            className="px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer border border-white/10"
+            title={language === "ko" ? "사용자 질문 마법사 열기" : "Open Guide Wizard"}
           >
-            <Sparkles size={15} />
-            <span>{language === "ko" ? "베스트 컷으로 사진첩 제작하기" : "Create 3D Photobook"}</span>
+            <HelpCircle size={15} className="text-amber-400" />
+            <span>{language === "ko" ? "초보자 질문 마법사" : "Beginner Wizard"}</span>
           </button>
-        )}
+          {onCreatePhotobook && (
+            <button
+              onClick={onCreatePhotobook}
+              className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition-all shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+            >
+              <Sparkles size={15} />
+              <span>{language === "ko" ? "베스트 컷으로 사진첩 제작하기" : "Create 3D Photobook"}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 4대 동작원리 안내 카드 (툴팁 기반 모듈) */}
@@ -1186,8 +1214,11 @@ export const DuplicatesTab = ({
               <select
                 value={autoResolveRule}
                 onChange={(e) => setAutoResolveRule(e.target.value as any)}
-                className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden w-full sm:w-auto font-bold cursor-pointer"
+                className="bg-white/5 border border-amber-500/30 rounded-xl px-3 py-2 text-xs text-amber-300 focus:outline-hidden w-full sm:w-auto font-black cursor-pointer"
               >
+                <option value="ai_smart" className="bg-slate-900 font-bold text-amber-400">
+                  {language === "ko" ? "✨ AI 스마트 분석 (초점·노출·구도 종합)" : "✨ AI Smart Analysis (Blur, Exposure, Composition)"}
+                </option>
                 <option value="sharpest" className="bg-slate-900">
                   {t("keepSharpest")}
                 </option>
@@ -1207,6 +1238,34 @@ export const DuplicatesTab = ({
                   {language === "ko" ? "EXIF 메타데이터 보존" : "Rich EXIF Metadata"}
                 </option>
               </select>
+            </Tooltip>
+            <Tooltip
+              title={language === "ko" ? "스마트 AI 사진 자동 선택" : "Smart AI Selection"}
+              content={
+                language === "ko"
+                  ? "단순 해상도/용량이 아닌 AI가 초점 선명도, 노출 밸런스, 피사체 구도를 종합 분석하여 각 중복 그룹의 최적 컷을 자동 지정합니다."
+                  : "Automatically selects the best photo per group using AI blur, exposure, and composition analysis rather than just resolution."
+              }
+            >
+              <button
+                onClick={() => {
+                  setAutoResolveRule("ai_smart");
+                  const result = SmartDuplicateSelector.applySmartSelectionToGroups(sortedGroups);
+                  addNotification(
+                    language === "ko" ? "✨ AI 스마트 자동 선택 완료" : "✨ AI Smart Duplicate Selection",
+                    language === "ko"
+                      ? `총 ${result.totalEvaluated}개 중복 그룹에 대해 초점·노출·구도 종합 평가를 마쳤습니다! (${result.improvedOverResolutionCount}개 그룹에서 단순 고해상도 대신 선명도/노출이 우수한 사진 선택)`
+                      : `Evaluated ${result.totalEvaluated} duplicate groups based on AI blur, exposure & composition! (${result.improvedOverResolutionCount} groups upgraded over naive resolution)`,
+                    "success"
+                  );
+                }}
+                className="px-3.5 py-2 bg-gradient-to-r from-amber-500/20 via-indigo-600/20 to-purple-600/20 hover:from-amber-500/30 hover:via-indigo-600/30 hover:to-purple-600/30 border border-amber-500/40 rounded-xl text-xs font-black text-amber-300 transition-all cursor-pointer flex items-center gap-1.5 justify-center w-full sm:w-auto shadow-md"
+              >
+                <Sparkles size={14} className="text-amber-400 animate-pulse" />
+                <span className="truncate">
+                  {language === "ko" ? "스마트 AI 자동 선택" : "Smart AI Selection"}
+                </span>
+              </button>
             </Tooltip>
             <button
               onClick={() =>
@@ -1237,6 +1296,47 @@ export const DuplicatesTab = ({
             <Trash2 size={14} /> {bulkLabel}
           </button>
         </div>
+      </div>
+
+      {/* Visual D3 Duplicate Storage Hotspots Heatmap */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => setShowHeatmap(!showHeatmap)}
+            className="px-4 py-2 bg-gradient-to-r from-amber-500/15 via-rose-500/15 to-indigo-500/15 hover:from-amber-500/25 hover:via-rose-500/25 hover:to-indigo-500/25 border border-amber-500/30 rounded-2xl text-xs font-black text-amber-300 transition-all cursor-pointer flex items-center gap-2 shadow-md"
+          >
+            <Flame size={15} className="text-amber-400 animate-bounce" />
+            <span>
+              {language === "ko"
+                ? `🔥 D3 중복 폴더 히트맵 ${showHeatmap ? "접기" : "펼치기"}`
+                : `🔥 D3 Folder Heatmap ${showHeatmap ? "Hide" : "Show"}`}
+            </span>
+            <ChevronDown size={14} className={`transition-transform ${showHeatmap ? "rotate-180" : ""}`} />
+          </button>
+
+          {heatmapFolderFilter && (
+            <div className="flex items-center gap-2 text-xs font-mono bg-amber-500/15 border border-amber-500/30 px-3 py-1.5 rounded-xl text-amber-300">
+              <span className="font-bold">
+                {language === "ko" ? "필터링 중:" : "Filtered:"} {heatmapFolderFilter}
+              </span>
+              <button
+                onClick={() => setHeatmapFolderFilter(null)}
+                className="p-1 hover:bg-amber-500/20 rounded-lg text-amber-300 transition-colors cursor-pointer"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {showHeatmap && (
+          <FolderDuplicateHeatmap
+            groups={sortedGroups}
+            onSelectFolderFilter={(folder) => setHeatmapFolderFilter(folder)}
+            activeFolderFilter={heatmapFolderFilter}
+            addNotification={addNotification}
+          />
+        )}
       </div>
 
       {/* Safe Backup Options Row */}
@@ -1655,6 +1755,7 @@ export const DuplicatesTab = ({
                   selectedPhotoId={selectedPhotoId}
                   onSelect={setSelectedPhotoId}
                   addNotification={addNotification}
+                  onAnimatePhoto={onAnimatePhoto}
                 />
               )}
             />

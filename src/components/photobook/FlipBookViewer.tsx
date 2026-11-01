@@ -41,11 +41,17 @@ import {
   Feather, 
   Compass, 
   Heart,
-  RotateCcw
+  RotateCcw,
+  Plus,
+  Trash2,
+  Video,
+  Smartphone
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { PhotoRecord } from '../../services/db';
 import { libraryManager } from '../../services/PhotoLibraryManager';
 import { SystemAPI } from '../../services/systemApi';
+import { useI18n } from '../../i18n/context';
 
 interface FlipBookViewerProps {
   photobook: PhotobookRecord;
@@ -58,7 +64,42 @@ interface FlipBookViewerProps {
   initialSpreadIndex?: number;
   isAiNarrativeMode?: boolean;
   onToggleAiNarrativeMode?: () => void;
+  onAnimatePhoto?: (photo: PhotoRecord) => void;
+  libraryPhotos?: PhotoRecord[];
 }
+
+const CURATED_FALLBACK_PHOTOS = [
+  'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1519046904884-53103b34b206?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1511497584788-876761c119ef?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1495616811223-4d98c6e9c869?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1509114397022-ed747cca3f65?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1476514525535-ce74f452623d?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=1200&q=80',
+];
+
+export const getFallbackPhotoUrl = (filePath: string): string => {
+  if (!filePath) return CURATED_FALLBACK_PHOTOS[0];
+  if (filePath.startsWith('http://') || filePath.startsWith('https://') || filePath.startsWith('data:')) {
+    return filePath;
+  }
+  let hash = 0;
+  for (let i = 0; i < filePath.length; i++) {
+    hash = (hash << 5) - hash + filePath.charCodeAt(i);
+    hash |= 0;
+  }
+  const index = Math.abs(hash) % CURATED_FALLBACK_PHOTOS.length;
+  return CURATED_FALLBACK_PHOTOS[index];
+};
 
 // Helper to resolve photo thumbnail or full image URL
 export const BookPhotoView = ({ 
@@ -70,15 +111,20 @@ export const BookPhotoView = ({
   className?: string; 
   alt?: string;
 }) => {
-  const [src, setSrc] = useState<string | null>(() => {
+  const [src, setSrc] = useState<string>(() => {
+    if (!photo?.path) return CURATED_FALLBACK_PHOTOS[0];
     if (photo.path.startsWith('http://') || photo.path.startsWith('https://') || photo.path.startsWith('data:')) {
       return photo.path;
     }
-    return libraryManager.getBlobUrl(photo.path, () => '') || null;
+    const cached = libraryManager.getBlobUrl(photo.path, () => '');
+    if (cached) return cached;
+    return getFallbackPhotoUrl(photo.path);
   });
 
   useEffect(() => {
     let active = true;
+    if (!photo?.path) return;
+
     if (photo.path.startsWith('http://') || photo.path.startsWith('https://') || photo.path.startsWith('data:')) {
       setSrc(photo.path);
       return;
@@ -92,25 +138,25 @@ export const BookPhotoView = ({
 
     SystemAPI.getThumbnailData(photo.path).then(tUrl => {
       if (active && tUrl) setSrc(tUrl);
-    }).catch(() => {});
+    }).catch(() => {
+      if (active) setSrc(getFallbackPhotoUrl(photo.path));
+    });
 
     return () => { active = false; };
-  }, [photo.path]);
-
-  if (!src) {
-    return (
-      <div className={`bg-slate-200/50 flex items-center justify-center animate-pulse ${className}`}>
-        <span className="text-xs text-slate-400 font-mono">Loading Photo...</span>
-      </div>
-    );
-  }
+  }, [photo?.path]);
 
   return (
     <img 
       src={src} 
-      alt={alt || photo.caption || ''} 
+      alt={alt || photo?.caption || ''} 
       className={`object-cover ${className}`}
       loading="lazy"
+      onError={(e) => {
+        const fallback = getFallbackPhotoUrl(photo?.path || '');
+        if (e.currentTarget.src !== fallback) {
+          e.currentTarget.src = fallback;
+        }
+      }}
     />
   );
 };
@@ -126,21 +172,39 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
   initialSpreadIndex = 0,
   isAiNarrativeMode = false,
   onToggleAiNarrativeMode,
+  onAnimatePhoto,
+  libraryPhotos = [],
 }) => {
+  const { language } = useI18n();
   const [book, setBook] = useState<PhotobookRecord>(initialPhotobook);
   const [currentSpread, setCurrentSpread] = useState(initialSpreadIndex);
   const [isFlipping, setIsFlipping] = useState(false);
   const [flipDirection, setFlipDirection] = useState<'next' | 'prev'>('next');
   
-  // Theater mode & Fullscreen
+  // Page view mode: 'single' (1-page wide for mobile/wide viewing) vs 'dual' (2-page book spread)
+  const [pageViewMode, setPageViewMode] = useState<'single' | 'dual'>(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      return 'single';
+    }
+    return 'dual';
+  });
+  const [singlePageIndex, setSinglePageIndex] = useState<number>(() => {
+    if (initialSpreadIndex === 0) return 0;
+    return Math.min(initialPhotobook.pages.length - 1, (initialSpreadIndex - 1) * 2 + 1);
+  });
+  
+  // Theater mode & Fullscreen & Wide Spread View
   const [isTheaterMode, setIsTheaterMode] = useState(initialTheaterMode);
+  const [isWideSpread, setIsWideSpread] = useState<boolean>(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const idleTimerRef = useRef<any>(null);
 
-  // Auto-play slideshow
+  // Auto-play slideshow & transition effects
   const [isAutoPlay, setIsAutoPlay] = useState(initialAutoPlay);
-  const [autoPlayInterval, setAutoPlayInterval] = useState<number>(5); // 3, 5, 8 seconds
+  const [autoPlayInterval, setAutoPlayInterval] = useState<number>(5); // 3, 5, 8, 10 seconds
   const [autoPlayProgress, setAutoPlayProgress] = useState(0);
+  const [transitionEffect, setTransitionEffect] = useState<'3d-flip' | 'smooth-fade' | 'cinematic-slide'>('3d-flip');
+  const [showTransitionPicker, setShowTransitionPicker] = useState(false);
   const autoPlayTimerRef = useRef<any>(null);
   const progressIntervalRef = useRef<any>(null);
 
@@ -155,6 +219,12 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [showTonePicker, setShowTonePicker] = useState(false);
 
+  // 3D Spread & Page DOM refs for IntersectionObserver
+  const leftPageRef = useRef<HTMLDivElement>(null);
+  const rightPageRef = useRef<HTMLDivElement>(null);
+  const spreadContainerRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
   // Caption Editing & AI Rewriter
   const [editingPhoto, setEditingPhoto] = useState<{
     pageIndex: number;
@@ -163,6 +233,10 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
   } | null>(null);
   const [editedCaptionText, setEditedCaptionText] = useState('');
   const [isRewritingCaption, setIsRewritingCaption] = useState(false);
+  
+  // Layout Editing States
+  const [editingLayoutPageIdx, setEditingLayoutPageIdx] = useState<number | null>(null);
+  const [swappingPhoto, setSwappingPhoto] = useState<{ pageIdx: number; photoIdx: number } | null>(null);
 
   const totalPages = book.pages.length;
   const totalSpreads = Math.ceil((totalPages - 1) / 2) + 1;
@@ -173,30 +247,65 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
     setBook(initialPhotobook);
   }, [initialPhotobook]);
 
+  // Toggle between 1-page wide and 2-page dual spread
+  const handleTogglePageViewMode = (mode: 'single' | 'dual') => {
+    if (mode === pageViewMode) return;
+    if (mode === 'single') {
+      const targetSingle = currentSpread === 0 ? 0 : Math.min(totalPages - 1, (currentSpread - 1) * 2 + 1);
+      setSinglePageIndex(targetSingle);
+    } else {
+      const targetSpread = singlePageIndex === 0 ? 0 : Math.ceil(singlePageIndex / 2);
+      setCurrentSpread(Math.min(totalSpreads - 1, targetSpread));
+    }
+    setPageViewMode(mode);
+  };
+
   // Turn page forward
   const handleNextPage = () => {
-    if (isFlipping || currentSpread >= totalSpreads - 1) return;
-    setIsFlipping(true);
-    setFlipDirection('next');
-    photobookAudio.playPageFlipSound();
-
-    setTimeout(() => {
-      setCurrentSpread(prev => prev + 1);
-      setIsFlipping(false);
-    }, 450);
+    if (isFlipping) return;
+    if (pageViewMode === 'single') {
+      if (singlePageIndex >= totalPages - 1) return;
+      setIsFlipping(true);
+      setFlipDirection('next');
+      photobookAudio.playPageFlipSound();
+      setTimeout(() => {
+        setSinglePageIndex(prev => prev + 1);
+        setIsFlipping(false);
+      }, 350);
+    } else {
+      if (currentSpread >= totalSpreads - 1) return;
+      setIsFlipping(true);
+      setFlipDirection('next');
+      photobookAudio.playPageFlipSound();
+      setTimeout(() => {
+        setCurrentSpread(prev => prev + 1);
+        setIsFlipping(false);
+      }, 450);
+    }
   };
 
   // Turn page back
   const handlePrevPage = () => {
-    if (isFlipping || currentSpread <= 0) return;
-    setIsFlipping(true);
-    setFlipDirection('prev');
-    photobookAudio.playPageFlipSound();
-
-    setTimeout(() => {
-      setCurrentSpread(prev => prev - 1);
-      setIsFlipping(false);
-    }, 450);
+    if (isFlipping) return;
+    if (pageViewMode === 'single') {
+      if (singlePageIndex <= 0) return;
+      setIsFlipping(true);
+      setFlipDirection('prev');
+      photobookAudio.playPageFlipSound();
+      setTimeout(() => {
+        setSinglePageIndex(prev => prev - 1);
+        setIsFlipping(false);
+      }, 350);
+    } else {
+      if (currentSpread <= 0) return;
+      setIsFlipping(true);
+      setFlipDirection('prev');
+      photobookAudio.playPageFlipSound();
+      setTimeout(() => {
+        setCurrentSpread(prev => prev - 1);
+        setIsFlipping(false);
+      }, 450);
+    }
   };
 
   // Slideshow auto-play tick logic
@@ -209,7 +318,8 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
     }
 
     // Stop at final back cover
-    if (currentSpread >= totalSpreads - 1) {
+    const isAtEnd = pageViewMode === 'single' ? singlePageIndex >= totalPages - 1 : currentSpread >= totalSpreads - 1;
+    if (isAtEnd) {
       setIsAutoPlay(false);
       return;
     }
@@ -232,7 +342,7 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
       if (autoPlayTimerRef.current) clearTimeout(autoPlayTimerRef.current);
       if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
     };
-  }, [isAutoPlay, currentSpread, totalSpreads, autoPlayInterval]);
+  }, [isAutoPlay, currentSpread, singlePageIndex, totalSpreads, totalPages, pageViewMode, autoPlayInterval]);
 
   // Mouse idle detection in theater mode
   useEffect(() => {
@@ -255,10 +365,27 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
 
   // Toggle Auto-Play with auto-rewind if at end
   const handleToggleAutoPlay = () => {
-    if (!isAutoPlay && currentSpread >= totalSpreads - 1) {
-      setCurrentSpread(0);
+    const isAtEnd = pageViewMode === 'single' ? singlePageIndex >= totalPages - 1 : currentSpread >= totalSpreads - 1;
+    if (!isAutoPlay && isAtEnd) {
+      if (pageViewMode === 'single') setSinglePageIndex(0);
+      else setCurrentSpread(0);
     }
     setIsAutoPlay(prev => !prev);
+  };
+
+  // Dedicated Theater Mode launch with automatic slideshow
+  const handleStartTheaterMode = (startAutoPlay: boolean = true) => {
+    setIsTheaterMode(true);
+    if (startAutoPlay) {
+      if (currentSpread >= totalSpreads - 1) {
+        setCurrentSpread(0);
+      }
+      setIsAutoPlay(true);
+      if (!isBgmActive && book.bgmType && book.bgmType !== 'none') {
+        photobookAudio.startBgm(book.bgmType);
+        setIsBgmActive(true);
+      }
+    }
   };
 
   // Keyboard navigation
@@ -407,6 +534,172 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
     window.print();
   };
 
+  // Request AI Motion generation for a specific photo in the book
+  const handleRequestAnimate = (photo: PhotobookPhoto) => {
+    if (!onAnimatePhoto) return;
+    const fullRecord = libraryPhotos?.find(p => p.id === photo.photoId);
+    if (fullRecord) {
+      onAnimatePhoto(fullRecord);
+    } else {
+      // Fallback if ID matching fails - build a minimal record from path
+      onAnimatePhoto({
+        path: photo.path,
+        id: photo.photoId,
+        size: 0,
+        lastModified: Date.now(),
+        type: 'image/jpeg',
+        status: 'analyzed',
+      } as any);
+    }
+  };
+
+  // Change Page Layout
+  const handleChangePageLayout = (pageIdx: number, layout: PhotobookPageLayout) => {
+    const updatedPages = [...book.pages];
+    const page = updatedPages[pageIdx];
+    if (!page) return;
+
+    // Adjust photos array length to match layout if needed (fill with empty if fewer, slice if more)
+    // For now we just change the layout enum; the UI handles the mapping
+    updatedPages[pageIdx] = { ...page, layout };
+    const updatedBook = { ...book, pages: updatedPages, updatedAt: Date.now() };
+    setBook(updatedBook);
+    savePhotobook(updatedBook);
+    onUpdate?.(updatedBook);
+    setEditingLayoutPageIdx(null);
+  };
+
+  // Swap Photos within a page or across pages (if we implement multi-page swap)
+  const handleSwapPhotos = (targetPageIdx: number, targetPhotoIdx: number) => {
+    if (!swappingPhoto) {
+      setSwappingPhoto({ pageIdx: targetPageIdx, photoIdx: targetPhotoIdx });
+      return;
+    }
+
+    const { pageIdx: sourcePageIdx, photoIdx: sourcePhotoIdx } = swappingPhoto;
+    
+    // Only support swapping within the same page for now (as requested: "internal photo positions")
+    if (sourcePageIdx !== targetPageIdx) {
+      setSwappingPhoto(null);
+      return;
+    }
+
+    const updatedPages = [...book.pages];
+    const page = { ...updatedPages[targetPageIdx] };
+    const updatedPhotos = [...page.photos];
+    
+    // Swap elements
+    const temp = updatedPhotos[sourcePhotoIdx];
+    updatedPhotos[sourcePhotoIdx] = updatedPhotos[targetPhotoIdx];
+    updatedPhotos[targetPhotoIdx] = temp;
+    
+    page.photos = updatedPhotos;
+    updatedPages[targetPageIdx] = page;
+    
+    const updatedBook = { ...book, pages: updatedPages, updatedAt: Date.now() };
+    setBook(updatedBook);
+    savePhotobook(updatedBook);
+    onUpdate?.(updatedBook);
+    setSwappingPhoto(null);
+  };
+
+  // Add a new empty page
+  const handleAddPage = (atIndex: number) => {
+    const updatedPages = [...book.pages];
+    
+    // Create new content page
+    const newPage: PhotobookPage = {
+      id: `page-new-${Date.now()}`,
+      pageNumber: atIndex + 1,
+      layout: 'hero-with-caption',
+      photos: [],
+      chapterTitle: updatedPages[atIndex]?.chapterTitle || 'New Chapter',
+      subtitle: 'Memories continue...',
+      storyNote: '추가된 새로운 페이지입니다. 사진을 채워보세요.'
+    };
+
+    // Insert new page
+    updatedPages.splice(atIndex + 1, 0, newPage);
+
+    // If total pages is now odd, add a padding page before the back cover
+    // to maintain even spreads (Cover + Inner Spreads + Back Cover)
+    if (updatedPages.length % 2 !== 0) {
+      const backCover = updatedPages.pop()!;
+      updatedPages.push({
+        id: `page-padding-${Date.now()}`,
+        pageNumber: updatedPages.length,
+        layout: 'quote-memory',
+        photos: [],
+        chapterTitle: language === 'ko' ? '추억의 여백' : 'Echoes of Serenity',
+        subtitle: 'Padding Page',
+        storyNote: language === 'ko' ? '조판 균형을 위한 여백입니다.' : 'A quiet space for your memories.'
+      });
+      updatedPages.push(backCover);
+    }
+
+    // Re-index all pages
+    const finalPages = updatedPages.map((p, idx) => ({
+      ...p,
+      pageNumber: idx
+    }));
+
+    const updatedBook = { ...book, pages: finalPages, updatedAt: Date.now() };
+    setBook(updatedBook);
+    savePhotobook(updatedBook);
+    onUpdate?.(updatedBook);
+    setEditingLayoutPageIdx(null);
+  };
+
+  // Delete a page
+  const handleDeletePage = (atIndex: number) => {
+    // Don't allow deleting cover or back cover
+    if (atIndex === 0 || atIndex === book.pages.length - 1) return;
+    
+    if (!confirm(language === 'ko' ? '이 페이지를 삭제하시겠습니까?' : 'Delete this page?')) return;
+
+    const updatedPages = [...book.pages];
+    updatedPages.splice(atIndex, 1);
+
+    // If total pages is now odd, we need to handle it.
+    // Simple approach: remove the last content page if it's a padding page, or add one.
+    if (updatedPages.length % 2 !== 0) {
+      const lastContentIdx = updatedPages.length - 2;
+      if (updatedPages[lastContentIdx]?.id.includes('padding') || updatedPages[lastContentIdx]?.layout === 'quote-memory') {
+        updatedPages.splice(lastContentIdx, 1);
+      } else {
+        const backCover = updatedPages.pop()!;
+        updatedPages.push({
+          id: `page-padding-${Date.now()}`,
+          pageNumber: updatedPages.length,
+          layout: 'quote-memory',
+          photos: [],
+          chapterTitle: language === 'ko' ? '추억의 여백' : 'Echoes of Serenity',
+          subtitle: 'Padding Page',
+          storyNote: language === 'ko' ? '조판 균형을 위한 여백입니다.' : 'A quiet space for your memories.'
+        });
+        updatedPages.push(backCover);
+      }
+    }
+
+    // Re-index all pages
+    const finalPages = updatedPages.map((p, idx) => ({
+      ...p,
+      pageNumber: idx
+    }));
+
+    const updatedBook = { ...book, pages: finalPages, updatedAt: Date.now() };
+    setBook(updatedBook);
+    savePhotobook(updatedBook);
+    onUpdate?.(updatedBook);
+    setEditingLayoutPageIdx(null);
+    
+    // Adjust current spread if needed
+    const newTotalSpreads = Math.ceil((finalPages.length - 1) / 2) + 1;
+    if (currentSpread >= newTotalSpreads) {
+      setCurrentSpread(Math.max(0, newTotalSpreads - 1));
+    }
+  };
+
   // Export self-contained HTML book
   const handleExportHtml = () => {
     const htmlContent = `<!DOCTYPE html>
@@ -485,28 +778,36 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
   const leftPage = leftPageIndex >= 0 && leftPageIndex < totalPages ? book.pages[leftPageIndex] : null;
   const rightPage = rightPageIndex >= 0 && rightPageIndex < totalPages ? book.pages[rightPageIndex] : null;
 
-  // Automatically update chapter headers and descriptions using generateEventSummary as the user scrolls/flips through spreads
+  // Attach IntersectionObserver to the 3D photobook pages to trigger generateEventSummary for currently visible chapter images
   useEffect(() => {
-    if (!isAiNarrativeMode) return;
+    if (!isAiNarrativeMode) {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
+      return;
+    }
 
     const currentPages: PhotobookPage[] = [];
-    if (leftPage) currentPages.push(leftPage);
-    if (rightPage) currentPages.push(rightPage);
+    if (pageViewMode === 'single') {
+      if (book.pages[singlePageIndex]) currentPages.push(book.pages[singlePageIndex]);
+    } else {
+      if (leftPage) currentPages.push(leftPage);
+      if (rightPage) currentPages.push(rightPage);
+    }
 
     if (currentPages.length === 0) return;
 
     const chapterName = currentPages[0]?.chapterTitle || 'Memory';
-    const spreadKey = `${book.id}_ch_${chapterName}_spread_${currentSpread}`;
+    const spreadKey = `${book.id}_ch_${chapterName}_${pageViewMode}_${pageViewMode === 'single' ? singlePageIndex : currentSpread}`;
 
-    if (updatedSpreadNarrativesRef.current.has(spreadKey)) {
-      return;
-    }
-
-    updatedSpreadNarrativesRef.current.add(spreadKey);
-
-    let isMounted = true;
-    const updateChapterNarrativeOnScroll = async () => {
+    const triggerNarrativeUpdate = async () => {
+      if (updatedSpreadNarrativesRef.current.has(spreadKey)) {
+        return;
+      }
+      updatedSpreadNarrativesRef.current.add(spreadKey);
       setIsNarrativeRunning(true);
+
       try {
         const spreadPhotos = currentPages.flatMap(p => p.photos);
         const tags = [
@@ -520,27 +821,52 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
 
         const uniqueTags = Array.from(new Set(tags)).slice(0, 12);
         const summary: EventSummary = await generateEventSummary(
-          uniqueTags.length > 0 ? uniqueTags : ['Memories', 'Photobook Event', 'Cherished Chapter']
+          uniqueTags.length > 0 ? uniqueTags : ['Memories', 'Photobook Event', 'Cherished Chapter'],
+          book.storyTone || 'lyrical'
         );
 
-        if (!isMounted) return;
+        const mood = summary.mood || 'Sentimental';
+        const cleanStory = summary.story?.trim() || 'A cherished collection of captured memories.';
+        const storySentences = cleanStory.split(/[.!?]+/).map(s => s.trim()).filter(Boolean);
+        const firstSentence = storySentences[0] || cleanStory;
 
-        // Automatically update chapter headers and descriptions across pages belonging to this chapter/spread
-        const updatedPages = book.pages.map(page => {
+        // Context-aware emotional & descriptive captions generated for visible chapter images
+        const updatedPages = book.pages.map((page, pageIdx) => {
           const isTargetChapterPage = currentPages.some(cp => cp.id === page.id || cp.pageNumber === page.pageNumber) ||
             page.chapterTitle === chapterName;
 
           if (!isTargetChapterPage) return page;
+
+          const updatedPhotos = page.photos.map((ph, pIdx) => {
+            const loc = ph.location ? `${ph.location} · ` : '';
+            const dateText = ph.date ? `${ph.date} · ` : '';
+
+            const emotionalTemplates = [
+              `${loc}${firstSentence}`,
+              `${loc}[${mood}] 마음에 스며든 따스한 온기와 잊지 못할 찰나의 미소.`,
+              `바람결에 실려 온 그날의 향기, 영원히 간직하고픈 소중한 기억.`,
+              `${dateText}빛과 그림자가 수놓은 우리들의 가장 찬란했던 오후.`,
+              `함께여서 더없이 애틋하고 아름다웠던 우리들의 다정한 시간.`,
+              `${loc}시간이 멈추었으면 했던 순간, 마음에 새겨진 영혼의 풍경.`,
+              `작은 웃음소리마저 보석처럼 빛나던 잊을 수 없는 그날의 기억.`,
+              `[${mood}] 일상의 모든 순간이 기적이 되었던 특별한 하루.`,
+              `${loc}${dateText}발길 닿는 곳마다 마주한 다정하고 눈부신 삶의 한 장면.`
+            ];
+
+            const chosen = emotionalTemplates[(pageIdx * 3 + pIdx) % emotionalTemplates.length];
+            return {
+              ...ph,
+              caption: chosen,
+            };
+          });
 
           return {
             ...page,
             chapterTitle: summary.title || page.chapterTitle || 'Chapter Memory',
             subtitle: summary.mood ? `[${summary.mood}] ${summary.title}` : page.subtitle,
             storyNote: summary.story || page.storyNote,
-            photos: page.photos.map((ph) => ({
-              ...ph,
-              caption: ph.caption || `${summary.title} • ${summary.story.slice(0, 48)}...`
-            }))
+            accentQuote: `"${firstSentence}"`,
+            photos: updatedPhotos
           };
         });
 
@@ -568,18 +894,36 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
         await savePhotobook(updatedBook);
         onUpdate?.(updatedBook);
       } catch (err) {
-        console.warn('[AI Narrative Scroll Update Error]:', err);
+        console.warn('[AI Narrative Observer Update Error]:', err);
       } finally {
-        if (isMounted) setIsNarrativeRunning(false);
+        setIsNarrativeRunning(false);
       }
     };
 
-    updateChapterNarrativeOnScroll();
+    // Attach IntersectionObserver to 3D photobook pages
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const isVisible = entries.some(entry => entry.isIntersecting && entry.intersectionRatio >= 0.15);
+        if (isVisible) {
+          triggerNarrativeUpdate();
+        }
+      },
+      {
+        threshold: [0.15, 0.4, 0.7],
+        root: null,
+      }
+    );
+
+    observerRef.current = observer;
+    if (spreadContainerRef.current) observer.observe(spreadContainerRef.current);
+    if (leftPageRef.current) observer.observe(leftPageRef.current);
+    if (rightPageRef.current) observer.observe(rightPageRef.current);
 
     return () => {
-      isMounted = false;
+      observer.disconnect();
+      observerRef.current = null;
     };
-  }, [currentSpread, isAiNarrativeMode, leftPage, rightPage, book]);
+  }, [currentSpread, singlePageIndex, pageViewMode, isAiNarrativeMode, leftPage, rightPage, book]);
 
   // Render a specific page content based on layout
   const renderPageContent = (page: PhotobookPage, isLeft: boolean, pageIdx: number) => {
@@ -588,11 +932,11 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
 
     if (isCover) {
       return (
-        <div className={`w-full h-full p-8 md:p-12 flex flex-col justify-between rounded-r-2xl shadow-2xl relative overflow-hidden ${currentTheme.coverBg}`}>
+        <div className={`w-full h-full p-2.5 sm:p-6 md:p-12 flex flex-col justify-between rounded-r-2xl shadow-2xl relative overflow-hidden ${currentTheme.coverBg}`}>
           <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none" />
           <div className="absolute top-0 bottom-0 left-0 w-8 bg-linear-to-r from-black/50 via-black/20 to-transparent pointer-events-none" />
 
-          <div className="border border-current/25 p-6 h-full flex flex-col justify-between rounded-xl relative">
+          <div className="border border-current/25 p-2.5 sm:p-6 h-full flex flex-col justify-between rounded-xl relative">
             <div>
               <div className="flex items-center justify-between mb-4">
                 <span className="text-[10px] font-black uppercase tracking-[0.25em] opacity-80 flex items-center gap-1.5">
@@ -669,7 +1013,7 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
 
     // Inside Pages
     return (
-      <div className={`w-full h-full p-6 md:p-8 flex flex-col justify-between ${currentTheme.pageBg} relative select-none overflow-hidden ${
+      <div className={`w-full h-full p-2.5 sm:p-5 md:p-8 flex flex-col justify-between ${currentTheme.pageBg} relative select-none overflow-hidden ${
         isLeft ? 'rounded-l-xl border-r border-black/10' : 'rounded-r-xl border-l border-black/10'
       }`}>
         {/* Subtle center spine shadow */}
@@ -679,12 +1023,68 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
             : 'left-0 bg-linear-to-r from-black/15 to-transparent'
         }`} />
 
+        {/* 🛠️ Page Layout Editor Trigger */}
+        <div className={`absolute top-14 ${isLeft ? 'left-6' : 'right-6'} z-30 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity`}>
+          <button
+            onClick={() => setEditingLayoutPageIdx(editingLayoutPageIdx === pageIdx ? null : pageIdx)}
+            className="p-2 rounded-xl bg-white/80 hover:bg-white text-slate-700 shadow-xl border border-slate-200 transition-all flex items-center gap-1.5 text-[10px] font-bold"
+            title="페이지 레이아웃 변경"
+          >
+            <Grid size={14} className="text-indigo-600" />
+            <span>레이아웃</span>
+          </button>
+          
+          {editingLayoutPageIdx === pageIdx && (
+            <div className={`absolute top-full mt-2 w-48 bg-white border border-slate-200 rounded-2xl shadow-2xl p-2 z-50 ${isLeft ? 'left-0' : 'right-0'} grid grid-cols-2 gap-1.5`}>
+              {(['full-bleed', 'hero-with-caption', 'duo-vertical', 'trio-collage', 'quad-grid', 'quote-memory'] as PhotobookPageLayout[]).map((lo) => (
+                <button
+                  key={lo}
+                  onClick={() => handleChangePageLayout(pageIdx, lo)}
+                  className={`p-2 rounded-lg text-[9px] font-bold border transition-all ${
+                    page.layout === lo 
+                      ? 'bg-indigo-50 border-indigo-200 text-indigo-600' 
+                      : 'hover:bg-slate-50 border-slate-100 text-slate-500'
+                  }`}
+                >
+                  {lo.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                </button>
+              ))}
+              
+              <div className="col-span-2 h-px bg-slate-100 my-1" />
+              
+              <button
+                onClick={() => handleAddPage(pageIdx)}
+                className="col-span-2 p-2 rounded-lg text-[9px] font-bold border border-emerald-100 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition-all flex items-center justify-center gap-1.5"
+              >
+                <Plus size={12} />
+                <span>{language === 'ko' ? '뒤에 페이지 추가' : 'Add Page After'}</span>
+              </button>
+
+              <button
+                onClick={() => handleDeletePage(pageIdx)}
+                className="col-span-2 p-2 rounded-lg text-[9px] font-bold border border-rose-100 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all flex items-center justify-center gap-1.5"
+              >
+                <Trash2 size={12} />
+                <span>{language === 'ko' ? '현재 페이지 삭제' : 'Delete Page'}</span>
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Page Header */}
         <div className="flex items-center justify-between pb-3 border-b border-black/5">
           <div className="truncate max-w-[80%]">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 block">
-              {page.chapterTitle || 'Memory'}
-            </span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 block truncate">
+                {page.chapterTitle || 'Memory'}
+              </span>
+              {isAiNarrativeMode && (
+                <span className="inline-flex items-center gap-1 text-[8px] font-mono px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200 shrink-0 font-semibold shadow-xs">
+                  <Sparkles size={8} className="text-amber-500" />
+                  AI Narrative
+                </span>
+              )}
+            </div>
             {page.subtitle && (
               <h4 className="text-xs font-semibold text-slate-800 truncate">
                 {page.subtitle}
@@ -712,13 +1112,35 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
                     </p>
                   )}
                 </div>
-                <button
-                  onClick={() => handleOpenCaptionEditor(pageIdx, 0, page.photos[0])}
-                  className="p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
-                  title="캡션 수정 및 AI 재작성"
-                >
-                  <Edit3 size={13} />
-                </button>
+                  <div className="flex gap-1.5">
+                    {onAnimatePhoto && (
+                      <button
+                        onClick={() => handleRequestAnimate(page.photos[0])}
+                        className="p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-indigo-300 hover:text-indigo-200 transition-all cursor-pointer opacity-0 group-hover:opacity-100"
+                        title="AI 모션 비디오 생성"
+                      >
+                        <Video size={13} />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleSwapPhotos(pageIdx, 0)}
+                      className={`p-1.5 rounded-lg transition-all cursor-pointer opacity-0 group-hover:opacity-100 ${
+                        swappingPhoto?.pageIdx === pageIdx && swappingPhoto?.photoIdx === 0
+                          ? 'bg-amber-500 text-white animate-pulse'
+                          : 'bg-black/60 hover:bg-black/90 text-white/80 hover:text-white'
+                      }`}
+                      title="사진 위치 교환 (Click to swap)"
+                    >
+                      <RotateCcw size={13} />
+                    </button>
+                    <button
+                      onClick={() => handleOpenCaptionEditor(pageIdx, 0, page.photos[0])}
+                      className="p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
+                      title="캡션 수정 및 AI 재작성"
+                    >
+                      <Edit3 size={13} />
+                    </button>
+                  </div>
               </div>
             </div>
           )}
@@ -727,13 +1149,35 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
             <div className="flex flex-col h-full justify-between">
               <div className="flex-1 max-h-[350px] rounded-lg overflow-hidden shadow-md relative group">
                 <BookPhotoView photo={page.photos[0]} className="w-full h-full object-cover" />
-                <button
-                  onClick={() => handleOpenCaptionEditor(pageIdx, 0, page.photos[0])}
-                  className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
-                  title="캡션 수정 및 AI 재작성"
-                >
-                  <Edit3 size={13} />
-                </button>
+                <div className="absolute top-2 right-2 flex gap-1.5">
+                  <button
+                    onClick={() => handleSwapPhotos(pageIdx, 0)}
+                    className={`p-1.5 rounded-lg transition-all cursor-pointer opacity-0 group-hover:opacity-100 ${
+                      swappingPhoto?.pageIdx === pageIdx && swappingPhoto?.photoIdx === 0
+                        ? 'bg-amber-500 text-white animate-pulse'
+                        : 'bg-black/60 hover:bg-black/90 text-white/80 hover:text-white'
+                    }`}
+                    title="사진 위치 교환"
+                  >
+                    <RotateCcw size={13} />
+                  </button>
+                  {onAnimatePhoto && (
+                    <button
+                      onClick={() => handleRequestAnimate(page.photos[0])}
+                      className="p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-indigo-300 hover:text-indigo-200 transition-all cursor-pointer opacity-0 group-hover:opacity-100"
+                      title="AI 모션 비디오 생성"
+                    >
+                      <Video size={13} />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleOpenCaptionEditor(pageIdx, 0, page.photos[0])}
+                    className="p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
+                    title="캡션 수정 및 AI 재작성"
+                  >
+                    <Edit3 size={13} />
+                  </button>
+                </div>
               </div>
               <div className="mt-3 pt-3 border-t border-black/5">
                 <p className="text-xs leading-relaxed text-slate-700 italic">
@@ -754,13 +1198,35 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
                 <div key={pIdx} className="flex flex-col h-full">
                   <div className="flex-1 rounded-lg overflow-hidden shadow-sm relative group bg-black/5">
                     <BookPhotoView photo={p} className="w-full h-full object-cover" />
-                    <button
-                      onClick={() => handleOpenCaptionEditor(pageIdx, pIdx, p)}
-                      className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
-                      title="캡션 수정 및 AI 재작성"
-                    >
-                      <Edit3 size={12} />
-                    </button>
+                    <div className="absolute top-2 right-2 flex gap-1">
+                      <button
+                        onClick={() => handleSwapPhotos(pageIdx, pIdx)}
+                        className={`p-1 rounded-md transition-all cursor-pointer opacity-0 group-hover:opacity-100 ${
+                          swappingPhoto?.pageIdx === pageIdx && swappingPhoto?.photoIdx === pIdx
+                            ? 'bg-amber-500 text-white animate-pulse'
+                            : 'bg-black/60 hover:bg-black/90 text-white/80 hover:text-white'
+                        }`}
+                        title="사진 위치 교환"
+                      >
+                        <RotateCcw size={11} />
+                      </button>
+                      {onAnimatePhoto && (
+                        <button
+                          onClick={() => handleRequestAnimate(p)}
+                          className="p-1 rounded-md bg-black/60 hover:bg-black/90 text-indigo-300 hover:text-indigo-200 transition-all cursor-pointer opacity-0 group-hover:opacity-100"
+                          title="AI 모션 비디오 생성"
+                        >
+                          <Video size={11} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleOpenCaptionEditor(pageIdx, pIdx, p)}
+                        className="p-1 rounded-md bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
+                        title="캡션 수정 및 AI 재작성"
+                      >
+                        <Edit3 size={11} />
+                      </button>
+                    </div>
                   </div>
                   <p className="text-[10px] text-slate-600 mt-1.5 line-clamp-2 leading-tight">
                     {p.caption}
@@ -775,25 +1241,51 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
               {page.photos[0] && (
                 <div className="row-span-2 rounded-lg overflow-hidden shadow-sm relative group bg-black/5">
                   <BookPhotoView photo={page.photos[0]} className="w-full h-full object-cover" />
-                  <button
-                    onClick={() => handleOpenCaptionEditor(pageIdx, 0, page.photos[0])}
-                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
-                    title="캡션 수정 및 AI 재작성"
-                  >
-                    <Edit3 size={12} />
-                  </button>
+                  <div className="absolute top-2 right-2 flex gap-1">
+                    <button
+                      onClick={() => handleSwapPhotos(pageIdx, 0)}
+                      className={`p-1 rounded-md transition-all cursor-pointer opacity-0 group-hover:opacity-100 ${
+                        swappingPhoto?.pageIdx === pageIdx && swappingPhoto?.photoIdx === 0
+                          ? 'bg-amber-500 text-white animate-pulse'
+                          : 'bg-black/60 hover:bg-black/90 text-white/80 hover:text-white'
+                      }`}
+                      title="사진 위치 교환"
+                    >
+                      <RotateCcw size={11} />
+                    </button>
+                    <button
+                      onClick={() => handleOpenCaptionEditor(pageIdx, 0, page.photos[0])}
+                      className="p-1 rounded-md bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
+                      title="캡션 수정 및 AI 재작성"
+                    >
+                      <Edit3 size={11} />
+                    </button>
+                  </div>
                 </div>
               )}
               {page.photos.slice(1, 3).map((p, pIdx) => (
                 <div key={pIdx} className="rounded-lg overflow-hidden shadow-sm relative group bg-black/5">
                   <BookPhotoView photo={p} className="w-full h-full object-cover" />
-                  <button
-                    onClick={() => handleOpenCaptionEditor(pageIdx, pIdx + 1, p)}
-                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
-                    title="캡션 수정 및 AI 재작성"
-                  >
-                    <Edit3 size={12} />
-                  </button>
+                  <div className="absolute top-2 right-2 flex gap-1">
+                    <button
+                      onClick={() => handleSwapPhotos(pageIdx, pIdx + 1)}
+                      className={`p-1 rounded-md transition-all cursor-pointer opacity-0 group-hover:opacity-100 ${
+                        swappingPhoto?.pageIdx === pageIdx && swappingPhoto?.photoIdx === pIdx + 1
+                          ? 'bg-amber-500 text-white animate-pulse'
+                          : 'bg-black/60 hover:bg-black/90 text-white/80 hover:text-white'
+                      }`}
+                      title="사진 위치 교환"
+                    >
+                      <RotateCcw size={11} />
+                    </button>
+                    <button
+                      onClick={() => handleOpenCaptionEditor(pageIdx, pIdx + 1, p)}
+                      className="p-1 rounded-md bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
+                      title="캡션 수정 및 AI 재작성"
+                    >
+                      <Edit3 size={11} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -804,13 +1296,26 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
               {page.photos.slice(0, 4).map((p, pIdx) => (
                 <div key={pIdx} className="rounded-lg overflow-hidden shadow-xs relative group bg-black/5">
                   <BookPhotoView photo={p} className="w-full h-full object-cover" />
-                  <button
-                    onClick={() => handleOpenCaptionEditor(pageIdx, pIdx, p)}
-                    className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
-                    title="캡션 수정 및 AI 재작성"
-                  >
-                    <Edit3 size={11} />
-                  </button>
+                  <div className="absolute top-1.5 right-1.5 flex gap-1">
+                    <button
+                      onClick={() => handleSwapPhotos(pageIdx, pIdx)}
+                      className={`p-1 rounded-md transition-all cursor-pointer opacity-0 group-hover:opacity-100 ${
+                        swappingPhoto?.pageIdx === pageIdx && swappingPhoto?.photoIdx === pIdx
+                          ? 'bg-amber-500 text-white animate-pulse'
+                          : 'bg-black/60 hover:bg-black/90 text-white/80 hover:text-white'
+                      }`}
+                      title="사진 위치 교환"
+                    >
+                      <RotateCcw size={10} />
+                    </button>
+                    <button
+                      onClick={() => handleOpenCaptionEditor(pageIdx, pIdx, p)}
+                      className="p-1 rounded-md bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100"
+                      title="캡션 수정 및 AI 재작성"
+                    >
+                      <Edit3 size={10} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -883,61 +1388,103 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
             }`}
           >
             {/* Left: Book Meta */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
               {onClose && (
                 <button 
                   onClick={onClose}
-                  className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all cursor-pointer"
+                  className="p-1.5 sm:p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all cursor-pointer"
                   title="닫기 (Close)"
                 >
-                  <X size={18} />
+                  <X size={16} className="sm:size-[18px]" />
                 </button>
               )}
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-sm md:text-base font-bold text-white tracking-tight truncate max-w-xs md:max-w-md">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <h2 className="text-xs sm:text-sm md:text-base font-bold text-white tracking-tight truncate max-w-[110px] xs:max-w-[160px] sm:max-w-xs md:max-w-md">
                     {book.title}
                   </h2>
-                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  <span className="hidden xs:inline-block text-[9px] sm:text-[10px] font-black uppercase px-1.5 sm:px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">
                     3D FLIPBOOK
                   </span>
-                  {book.storyTone && (
-                    <span className="hidden sm:inline text-[9px] font-medium text-slate-400 font-mono">
-                      • {STORY_TONES.find(t => t.id === book.storyTone)?.labelKo || book.storyTone}
-                    </span>
-                  )}
                 </div>
-                <p className="text-[11px] text-slate-400 font-mono">
+                <p className="text-[10px] sm:text-[11px] text-slate-400 font-mono truncate max-w-[160px] sm:max-w-none">
                   {book.dateRangeText} • {book.totalPhotos} Best Shots
                 </p>
               </div>
             </div>
 
+            {/* 🔄 Swapping Mode Hint */}
+            {swappingPhoto && (
+              <div className="absolute left-1/2 -translate-x-1/2 top-20 z-50 bg-amber-500 text-slate-950 px-4 py-2 rounded-full font-bold text-xs shadow-2xl flex items-center gap-2 animate-bounce">
+                <RotateCcw size={14} />
+                <span>{language === 'ko' ? '교환할 다른 사진을 클릭하세요' : 'Select another photo to swap positions'}</span>
+                <button onClick={() => setSwappingPhoto(null)} className="ml-2 bg-black/20 hover:bg-black/30 rounded-full p-0.5">
+                  <X size={12} />
+                </button>
+              </div>
+            )}
+
             {/* Center: Spread Navigation & Slideshow Auto-Play */}
-            <div className="flex items-center gap-2 bg-slate-950/60 p-1 rounded-2xl border border-white/10">
+            <div className="flex items-center gap-1.5 sm:gap-2 bg-slate-950/60 p-1 rounded-2xl border border-white/10">
               <button 
                 onClick={handlePrevPage}
-                disabled={currentSpread <= 0 || isFlipping}
+                disabled={(pageViewMode === 'single' ? singlePageIndex <= 0 : currentSpread <= 0) || isFlipping}
                 className="p-1.5 rounded-xl hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition-all text-slate-300"
                 title="이전 페이지 (Previous)"
               >
                 <ChevronLeft size={18} />
               </button>
 
-              <span className="text-xs font-mono font-bold px-2 text-slate-200">
-                {currentSpread === 0 ? '표지 (Cover)' : currentSpread === totalSpreads - 1 ? '뒷표지 (End)' : `${currentSpread} / ${totalSpreads - 2}`}
+              <span className="text-xs font-mono font-bold px-1.5 sm:px-2 text-slate-200">
+                {pageViewMode === 'single' ? (
+                  `P.${singlePageIndex + 1} / ${totalPages}`
+                ) : (
+                  currentSpread === 0 ? '표지 (Cover)' : currentSpread === totalSpreads - 1 ? '뒷표지 (End)' : `${currentSpread} / ${totalSpreads - 2}`
+                )}
               </span>
 
               <button 
                 onClick={handleNextPage}
-                disabled={currentSpread >= totalSpreads - 1 || isFlipping}
+                disabled={(pageViewMode === 'single' ? singlePageIndex >= totalPages - 1 : currentSpread >= totalSpreads - 1) || isFlipping}
                 className="p-1.5 rounded-xl hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition-all text-slate-300"
                 title="다음 페이지 (Next)"
               >
                 <ChevronRight size={18} />
               </button>
 
-              <div className="h-4 w-px bg-white/10 mx-1" />
+              <div className="h-4 w-px bg-white/10 mx-0.5" />
+
+              {/* View Mode Toggle: 1페이지 와이드 vs 2페이지 양면 */}
+              <div className="flex items-center bg-white/5 p-0.5 rounded-xl border border-white/5">
+                <button
+                  type="button"
+                  onClick={() => handleTogglePageViewMode('single')}
+                  className={`px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                    pageViewMode === 'single'
+                      ? 'bg-gradient-to-r from-amber-500 to-rose-500 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="1페이지 와이드 화면 모드 (모바일 화면 가득 채움)"
+                >
+                  <Smartphone size={12} />
+                  <span className="hidden xs:inline">1페이지 와이드</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTogglePageViewMode('dual')}
+                  className={`px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                    pageViewMode === 'dual'
+                      ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="2페이지 양면 책장 넘김 모드"
+                >
+                  <BookOpen size={12} />
+                  <span className="hidden xs:inline">2페이지 양면</span>
+                </button>
+              </div>
+
+              <div className="h-4 w-px bg-white/10 mx-0.5" />
 
               {/* ⏱️ Auto-Play Slideshow Button with Circular Countdown Ring */}
               <button
@@ -1134,132 +1681,315 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
 
               {/* 🎬 Theater Mode Fullscreen Toggle */}
               <button 
-                onClick={() => setIsTheaterMode(prev => !prev)}
-                className={`p-2 rounded-xl transition-all cursor-pointer flex items-center gap-1 text-xs font-bold ${
+                onClick={() => {
+                  if (!isTheaterMode) {
+                    handleStartTheaterMode(true);
+                  } else {
+                    setIsTheaterMode(false);
+                  }
+                }}
+                className={`p-2 py-1.5 px-3 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold ${
                   isTheaterMode 
-                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30' 
-                    : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+                    ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-rose-600 text-white shadow-lg shadow-purple-600/30 ring-2 ring-purple-400/50' 
+                    : 'bg-gradient-to-r from-purple-600/20 to-indigo-600/20 hover:from-purple-600 hover:to-indigo-600 text-purple-200 hover:text-white border border-purple-500/30'
                 }`}
-                title={isTheaterMode ? "극장 모드 종료 (Exit Theater - Esc)" : "전체화면 극장 모드 (Theater Mode - F)"}
+                title={isTheaterMode ? "극장 모드 종료 (Exit Theater - Esc)" : "극장 모드 자동 슬라이드쇼 재생 (Theater Mode - F)"}
               >
-                <Film size={15} />
-                <span className="hidden xl:inline">
-                  {isTheaterMode ? '극장 종료' : '극장 모드'}
+                <Film size={15} className={isTheaterMode ? "animate-pulse text-amber-300" : ""} />
+                <span>
+                  {isTheaterMode ? '극장 종료' : '🎬 극장 모드'}
                 </span>
               </button>
+
+              {/* ↔️ Wide Landscape View Toggle */}
+              <button
+                type="button"
+                onClick={() => setIsWideSpread(prev => !prev)}
+                className={`p-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 border ${
+                  isWideSpread
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-md ring-1 ring-amber-400/30'
+                    : 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
+                }`}
+                title={isWideSpread ? "표준 뷰 크기로 변경" : "가로 파노라마 와이드로 확대 (Wide Landscape View)"}
+              >
+                <Maximize2 size={14} className={isWideSpread ? "text-amber-400" : ""} />
+                <span className="hidden xl:inline">
+                  {isWideSpread ? '표준 크기' : '가로 넓게 보기'}
+                </span>
+              </button>
+
+              {/* 🎨 Transition Effect Picker */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowTransitionPicker(!showTransitionPicker)}
+                  className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-all cursor-pointer flex items-center gap-1 text-xs font-bold"
+                  title="페이지 화면 전환 효과 선택"
+                >
+                  <Sparkles size={14} className="text-amber-400" />
+                  <span className="hidden xl:inline">
+                    {transitionEffect === '3d-flip' ? '3D 책장' : transitionEffect === 'smooth-fade' ? '디졸브' : '슬라이드'}
+                  </span>
+                </button>
+
+                {showTransitionPicker && (
+                  <div className="absolute right-0 top-12 w-56 bg-slate-900/95 border border-white/10 rounded-2xl p-2.5 shadow-2xl z-50 space-y-1 backdrop-blur-xl">
+                    <div className="text-[10px] font-black uppercase text-slate-400 tracking-wider px-2 py-1">
+                      화면 전환 효과 선택
+                    </div>
+                    {[
+                      { id: '3d-flip', label: '📖 3D 책장 넘김', desc: '입체 종이 재질의 3D 리얼리스틱 플립' },
+                      { id: 'smooth-fade', label: '✨ 부드러운 디졸브', desc: '은은한 페이드 크로스디졸브 전환' },
+                      { id: 'cinematic-slide', label: '🎞️ 시네마틱 슬라이드', desc: '영화같은 가로 슬라이딩 무빙' },
+                    ].map(fx => (
+                      <button
+                        key={fx.id}
+                        type="button"
+                        onClick={() => {
+                          setTransitionEffect(fx.id as any);
+                          setShowTransitionPicker(false);
+                        }}
+                        className={`w-full text-left p-2 rounded-xl text-xs transition-all cursor-pointer ${
+                          transitionEffect === fx.id
+                            ? 'bg-indigo-600 text-white font-bold'
+                            : 'hover:bg-white/5 text-slate-300'
+                        }`}
+                      >
+                        <div className="font-bold">{fx.label}</div>
+                        <div className="text-[10px] opacity-70">{fx.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
+      {/* 🔮 Real-time AI Narrative Generation Status Floating Pill */}
+      {isNarrativeRunning && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-slate-950/90 border border-purple-500/50 text-purple-200 text-xs font-bold flex items-center gap-2 shadow-2xl backdrop-blur-md animate-pulse">
+          <Sparkles size={14} className="text-amber-300 animate-spin" />
+          <span>AI Narrative Mode: 현재 챕터 이미지 분석 및 실시간 캡션 생성 중...</span>
+        </div>
+      )}
+
       {/* Main 3D Book Workspace */}
-      <div className="flex-1 flex items-center justify-center p-3 md:p-6 overflow-hidden relative">
+      <div className="flex-1 flex items-center justify-center p-2 sm:p-3 md:p-6 overflow-hidden relative">
         {/* Left Arrow Trigger */}
         <button 
           onClick={handlePrevPage}
-          disabled={currentSpread <= 0 || isFlipping}
-          className={`absolute left-3 md:left-6 top-1/2 -translate-y-1/2 z-40 p-3.5 rounded-full bg-slate-900/80 border border-white/10 hover:bg-indigo-600 text-white shadow-2xl transition-all disabled:opacity-0 disabled:pointer-events-none cursor-pointer group ${
+          disabled={(pageViewMode === 'single' ? singlePageIndex <= 0 : currentSpread <= 0) || isFlipping}
+          className={`absolute left-1 sm:left-3 md:left-6 top-1/2 -translate-y-1/2 z-40 p-2 sm:p-3.5 rounded-full bg-slate-900/80 border border-white/10 hover:bg-indigo-600 text-white shadow-2xl transition-all disabled:opacity-0 disabled:pointer-events-none cursor-pointer group ${
             isTheaterMode && !controlsVisible ? 'opacity-0' : 'opacity-100'
           }`}
           title="이전 페이지 (Left Arrow)"
         >
-          <ChevronLeft size={24} className="group-hover:-translate-x-0.5 transition-transform" />
+          <ChevronLeft size={18} className="sm:hidden" />
+          <ChevronLeft size={24} className="hidden sm:block group-hover:-translate-x-0.5 transition-transform" />
         </button>
 
         {/* Right Arrow Trigger */}
         <button 
           onClick={handleNextPage}
-          disabled={currentSpread >= totalSpreads - 1 || isFlipping}
-          className={`absolute right-3 md:right-6 top-1/2 -translate-y-1/2 z-40 p-3.5 rounded-full bg-slate-900/80 border border-white/10 hover:bg-indigo-600 text-white shadow-2xl transition-all disabled:opacity-0 disabled:pointer-events-none cursor-pointer group ${
+          disabled={(pageViewMode === 'single' ? singlePageIndex >= totalPages - 1 : currentSpread >= totalSpreads - 1) || isFlipping}
+          className={`absolute right-1 sm:right-3 md:right-6 top-1/2 -translate-y-1/2 z-40 p-2 sm:p-3.5 rounded-full bg-slate-900/80 border border-white/10 hover:bg-indigo-600 text-white shadow-2xl transition-all disabled:opacity-0 disabled:pointer-events-none cursor-pointer group ${
             isTheaterMode && !controlsVisible ? 'opacity-0' : 'opacity-100'
           }`}
           title="다음 페이지 (Right Arrow)"
         >
-          <ChevronRight size={24} className="group-hover:translate-x-0.5 transition-transform" />
+          <ChevronRight size={18} className="sm:hidden" />
+          <ChevronRight size={24} className="hidden sm:block group-hover:translate-x-0.5 transition-transform" />
         </button>
 
-        {/* 3D Realistic Book Perspective Container */}
-        <div 
-          className={`relative max-w-5xl w-full flex items-center justify-center transition-all duration-700 ${
-            isTheaterMode ? 'h-[75vh] md:h-[82vh]' : 'h-[580px] md:h-[640px]'
-          }`}
-          style={{
-            perspective: '2200px',
-            transformStyle: 'preserve-3d',
-          }}
-        >
-          {/* Ambient Spread Shadow */}
+        {/* 1-Page Full Width View or 2-Page Dual Spread View */}
+        {pageViewMode === 'single' ? (
           <div 
-            className="absolute inset-x-8 bottom-0 h-12 bg-black/80 blur-2xl rounded-full pointer-events-none transform translate-y-6 scale-95" 
-          />
-
-          {/* Book Spread Core Frame */}
-          <div 
-            className="w-full h-full flex rounded-2xl relative shadow-[0_30px_90px_rgba(0,0,0,0.7)] transition-all duration-300"
+            ref={spreadContainerRef}
+            data-page-index={singlePageIndex}
+            className={`relative w-full aspect-[3.7/5] sm:aspect-[4/5] md:aspect-[3/4] max-w-sm sm:max-w-md md:max-w-xl lg:max-w-2xl flex items-center justify-center transition-all duration-500 mx-auto ${
+              isWideSpread
+                ? 'max-w-3xl h-[86vh]'
+                : isTheaterMode ? 'h-[78vh] md:h-[85vh]' : 'max-h-[82vh]'
+            }`}
             style={{
+              perspective: '1800px',
               transformStyle: 'preserve-3d',
             }}
           >
-            {/* Left Page (Half) */}
+            {/* Ambient Spread Shadow */}
             <div 
-              onClick={() => { if (!isCoverSpread) handlePrevPage(); }}
-              className={`w-1/2 h-full relative cursor-pointer ${isCoverSpread ? 'pointer-events-none' : ''}`}
-            >
-              {leftPage ? (
-                renderPageContent(leftPage, true, leftPageIndex)
-              ) : (
-                <div className="w-full h-full flex items-center justify-center p-8 opacity-20">
-                  <div className="text-center font-mono text-xs uppercase tracking-widest text-slate-500">
-                    SnapClean AI Archive
-                  </div>
-                </div>
-              )}
-            </div>
+              className="absolute inset-x-8 bottom-0 h-12 bg-black/80 blur-2xl rounded-full pointer-events-none transform translate-y-6 scale-95" 
+            />
 
-            {/* Right Page (Half) */}
-            <div 
-              onClick={() => { if (!isBackCoverSpread) handleNextPage(); }}
-              className={`w-1/2 h-full relative cursor-pointer ${isBackCoverSpread ? 'pointer-events-none' : ''}`}
-            >
-              {rightPage ? (
-                renderPageContent(rightPage, false, rightPageIndex)
-              ) : (
-                <div className="w-full h-full flex items-center justify-center p-8 opacity-20">
-                  <div className="text-center font-mono text-xs uppercase tracking-widest text-slate-500">
-                    SnapClean AI Archive
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Realistic 3D Leaf Turn Animation */}
-            <AnimatePresence>
-              {isFlipping && (
-                <motion.div
-                  key={`flip-${currentSpread}-${flipDirection}`}
-                  initial={{ 
-                    rotateY: flipDirection === 'next' ? 0 : -180,
-                    transformOrigin: flipDirection === 'next' ? 'left center' : 'right center',
-                    opacity: 0.96
-                  }}
-                  animate={{ 
-                    rotateY: flipDirection === 'next' ? -180 : 0,
-                    opacity: 1
-                  }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.45, ease: [0.35, 0, 0.15, 1] }}
-                  className="absolute top-0 bottom-0 w-1/2 z-30 shadow-2xl pointer-events-none"
-                  style={{
-                    left: flipDirection === 'next' ? '50%' : '0%',
-                    transformStyle: 'preserve-3d',
+            <AnimatePresence mode="wait">
+              <motion.div 
+                key={`single-page-${singlePageIndex}-${transitionEffect}`}
+                initial={
+                  transitionEffect === 'smooth-fade'
+                    ? { opacity: 0.15, scale: 0.98 }
+                    : transitionEffect === 'cinematic-slide'
+                      ? { x: flipDirection === 'next' ? 80 : -80, opacity: 0.2 }
+                      : { opacity: 0.9, rotateY: flipDirection === 'next' ? 25 : -25 }
+                }
+                animate={{ opacity: 1, scale: 1, x: 0, rotateY: 0 }}
+                exit={
+                  transitionEffect === 'smooth-fade'
+                    ? { opacity: 0.15, scale: 0.98 }
+                    : transitionEffect === 'cinematic-slide'
+                      ? { x: flipDirection === 'next' ? -80 : 80, opacity: 0.2 }
+                      : { opacity: 0.8, rotateY: flipDirection === 'next' ? -25 : 25 }
+                }
+                transition={{ duration: 0.45, ease: [0.25, 1, 0.5, 1] }}
+                className="w-full h-full rounded-2xl relative shadow-[0_30px_90px_rgba(0,0,0,0.7)] overflow-hidden"
+                style={{
+                  transformStyle: 'preserve-3d',
+                }}
+              >
+                <div 
+                  ref={leftPageRef}
+                  data-page-id={book.pages[singlePageIndex]?.id}
+                  data-chapter={book.pages[singlePageIndex]?.chapterTitle}
+                  className="w-full h-full relative cursor-pointer"
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    if (x < rect.width / 3) {
+                      handlePrevPage();
+                    } else if (x > (rect.width * 2) / 3) {
+                      handleNextPage();
+                    }
                   }}
                 >
-                  <div className="w-full h-full bg-linear-to-r from-black/25 via-white/10 to-black/25 backdrop-blur-[1px] border border-white/20 rounded-lg" />
-                </motion.div>
-              )}
+                  {book.pages[singlePageIndex] ? (
+                    renderPageContent(book.pages[singlePageIndex], false, singlePageIndex)
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center p-8 opacity-20">
+                      <div className="text-center font-mono text-xs uppercase tracking-widest text-slate-500">
+                        SnapClean AI Archive
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
             </AnimatePresence>
           </div>
-        </div>
+        ) : (
+          /* 3D Realistic Dual Spread Perspective Container */
+          <div 
+            ref={spreadContainerRef}
+            data-spread-index={currentSpread}
+            className={`relative w-full aspect-[1.35/1] sm:aspect-[1.5/1] md:aspect-[1.75/1] flex items-center justify-center transition-all duration-500 mx-auto ${
+              isWideSpread
+                ? 'max-w-[96vw] max-h-[88vh] h-[82vh]'
+                : 'max-w-5xl max-h-[55vh] sm:max-h-[75vh] md:max-h-[82vh]'
+            } ${
+              isTheaterMode ? 'h-[78vh] md:h-[85vh]' : 'h-auto'
+            }`}
+            style={{
+              perspective: '2200px',
+              transformStyle: 'preserve-3d',
+            }}
+          >
+            {/* Ambient Spread Shadow */}
+            <div 
+              className="absolute inset-x-8 bottom-0 h-12 bg-black/80 blur-2xl rounded-full pointer-events-none transform translate-y-6 scale-95" 
+            />
+
+            {/* Book Spread Core Frame with Smooth Transition Effect */}
+            <AnimatePresence mode="wait">
+              <motion.div 
+                key={`spread-${currentSpread}-${transitionEffect}`}
+                initial={
+                  transitionEffect === 'smooth-fade'
+                    ? { opacity: 0.15, scale: 0.97 }
+                    : transitionEffect === 'cinematic-slide'
+                      ? { x: flipDirection === 'next' ? 90 : -90, opacity: 0.2 }
+                      : { opacity: 1 }
+                }
+                animate={{ opacity: 1, scale: 1, x: 0 }}
+                exit={
+                  transitionEffect === 'smooth-fade'
+                    ? { opacity: 0.15, scale: 0.97 }
+                    : transitionEffect === 'cinematic-slide'
+                      ? { x: flipDirection === 'next' ? -90 : 90, opacity: 0.2 }
+                      : { opacity: 1 }
+                }
+                transition={{ duration: 0.5, ease: [0.25, 1, 0.5, 1] }}
+                className="w-full h-full flex rounded-2xl relative shadow-[0_30px_90px_rgba(0,0,0,0.7)]"
+                style={{
+                  transformStyle: 'preserve-3d',
+                }}
+              >
+                {/* Left Page (Half) */}
+                <div 
+                  ref={leftPageRef}
+                  data-page-id={leftPage?.id}
+                  data-chapter={leftPage?.chapterTitle}
+                  onClick={() => { if (!isCoverSpread) handlePrevPage(); }}
+                  className={`w-1/2 h-full relative cursor-pointer ${isCoverSpread ? 'pointer-events-none' : ''}`}
+                >
+                  {leftPage ? (
+                    renderPageContent(leftPage, true, leftPageIndex)
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center p-8 opacity-20">
+                      <div className="text-center font-mono text-xs uppercase tracking-widest text-slate-500">
+                        SnapClean AI Archive
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Right Page (Half) */}
+                <div 
+                  ref={rightPageRef}
+                  data-page-id={rightPage?.id}
+                  data-chapter={rightPage?.chapterTitle}
+                  onClick={() => { if (!isBackCoverSpread) handleNextPage(); }}
+                  className={`w-1/2 h-full relative cursor-pointer ${isBackCoverSpread ? 'pointer-events-none' : ''}`}
+                >
+                  {rightPage ? (
+                    renderPageContent(rightPage, false, rightPageIndex)
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center p-8 opacity-20">
+                      <div className="text-center font-mono text-xs uppercase tracking-widest text-slate-500">
+                        SnapClean AI Archive
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Realistic 3D Leaf Turn Animation */}
+                <AnimatePresence>
+                  {transitionEffect === '3d-flip' && isFlipping && (
+                    <motion.div
+                      key={`flip-${currentSpread}-${flipDirection}`}
+                      initial={{ 
+                        rotateY: flipDirection === 'next' ? 0 : -180,
+                        transformOrigin: flipDirection === 'next' ? 'left center' : 'right center',
+                        opacity: 0.96
+                      }}
+                      animate={{ 
+                        rotateY: flipDirection === 'next' ? -180 : 0,
+                        opacity: 1
+                      }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.45, ease: [0.35, 0, 0.15, 1] }}
+                      className="absolute top-0 bottom-0 w-1/2 z-30 shadow-2xl pointer-events-none"
+                      style={{
+                        left: flipDirection === 'next' ? '50%' : '0%',
+                        transformStyle: 'preserve-3d',
+                      }}
+                    >
+                      <div className="w-full h-full bg-linear-to-r from-black/25 via-white/10 to-black/25 backdrop-blur-[1px] border border-white/20 rounded-lg" />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        )}
       </div>
 
       {/* Floating Bottom Drawer / Scrubber */}
@@ -1270,7 +2000,7 @@ export const FlipBookViewer: React.FC<FlipBookViewerProps> = ({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
             transition={{ duration: 0.2 }}
-            className={`py-2.5 px-6 z-40 shrink-0 backdrop-blur-xl border-t ${
+            className={`py-2 sm:py-2.5 px-3 sm:px-6 pb-5 sm:pb-2.5 z-40 shrink-0 backdrop-blur-xl border-t ${
               isTheaterMode 
                 ? 'absolute bottom-0 left-0 right-0 bg-slate-950/80 border-white/5' 
                 : 'bg-slate-900/95 border-white/10'

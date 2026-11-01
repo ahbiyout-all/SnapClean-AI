@@ -31,6 +31,7 @@ import { useI18n } from "../i18n/context";
 import { PhotoCard } from "./PhotoCard";
 import { SystemAPI } from "../services/systemApi";
 import { libraryManager, DedupeRule } from "../services/PhotoLibraryManager";
+import { SmartDuplicateSelector } from "../services/smartDuplicateSelector";
 import { MotionCreatorModal } from "./MotionCreatorModal";
 import { blobRegistry } from "../utils/blobRegistry";
 import { DuplicateExplorerTable } from "./DuplicateExplorerTable";
@@ -53,6 +54,7 @@ interface DuplicateGroupProps {
     type: "info" | "success" | "warning" | "error",
   ) => void;
   viewMode?: DuplicateViewMode;
+  onAnimatePhoto?: (photo: PhotoRecord) => void;
 }
 
 function formatBytes(bytes: number, decimals = 2): string {
@@ -294,6 +296,7 @@ interface DuplicateListRowProps {
   bestSize: number;
   isAllSameSize: boolean;
   onInspect?: () => void;
+  onAnimatePhoto?: (photo: PhotoRecord) => void;
 }
 
 const DuplicateListRow: React.FC<DuplicateListRowProps> = ({
@@ -309,6 +312,7 @@ const DuplicateListRow: React.FC<DuplicateListRowProps> = ({
   bestSize,
   isAllSameSize,
   onInspect,
+  onAnimatePhoto,
 }) => {
   const [copied, setCopied] = useState(false);
   const [imgLoadError, setImgLoadError] = useState(false);
@@ -647,6 +651,31 @@ const DuplicateListRow: React.FC<DuplicateListRowProps> = ({
 
       {/* Right: Action Buttons */}
       <div className="flex items-center gap-2 justify-end shrink-0 border-t xl:border-t-0 border-white/5 pt-2 xl:pt-0">
+        {onAnimatePhoto && !isVideo && !isPdf && (
+          <Tooltip
+            title={language === "ko" ? "AI 모션 영상 생성" : "Generate AI Motion Video"}
+            content={
+              language === "ko"
+                ? "Gemini Omni 모델을 통해 5초 카메라 모션 영상을 생성합니다."
+                : "Generate 5-second cinematic motion video with Gemini Omni."
+            }
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAnimatePhoto(photo);
+              }}
+              className="px-3 py-2 bg-gradient-to-r from-violet-600/20 to-indigo-600/20 hover:from-violet-600 hover:to-indigo-600 text-indigo-300 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border border-indigo-500/30 shadow-sm"
+            >
+              <Video size={13} className="text-violet-400" />
+              <span className="hidden sm:inline">
+                {language === "ko" ? "AI 모션" : "Motion"}
+              </span>
+            </button>
+          </Tooltip>
+        )}
+
         {onInspect && (
           <Tooltip
             title={language === "ko" ? "정밀 사진 분석" : "Inspect Photo"}
@@ -759,6 +788,7 @@ export const DuplicateGroup = ({
   onSelect,
   addNotification,
   viewMode = "details",
+  onAnimatePhoto,
 }: DuplicateGroupProps) => {
   const { t, language } = useI18n();
   const [openMotionCreator, setOpenMotionCreator] = useState(false);
@@ -775,6 +805,15 @@ export const DuplicateGroup = ({
     () => DedupeEngine.getBestPhoto(group.photos, rule),
     [group.photos, rule],
   );
+
+  const smartAnalysis = useMemo(() => {
+    try {
+      return SmartDuplicateSelector.getSmartBestPhoto(group.photos);
+    } catch (e) {
+      return null;
+    }
+  }, [group.photos]);
+
   const [toKeepIds, setToKeepIds] = useState<number[]>([]);
 
   useEffect(() => {
@@ -1183,6 +1222,41 @@ export const DuplicateGroup = ({
             className="overflow-hidden"
           >
             <div className="pt-6 border-t border-white/5 mt-6 relative z-10 space-y-4">
+              {/* Smart AI Quality Recommendation Card */}
+              {smartAnalysis && (
+                <div className="bg-gradient-to-r from-amber-500/15 via-indigo-600/15 to-purple-600/15 border border-amber-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-lg">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0 mt-0.5 sm:mt-0">
+                      <Sparkles size={18} className="animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-extrabold text-amber-300 uppercase tracking-wider text-[11px]">
+                          {language === "ko" ? "✨ 스마트 AI 사진 분석 추천" : "✨ Smart AI Photo Selection Recommendation"}
+                        </span>
+                        {smartAnalysis.bestPhoto.id && smartAnalysis.breakdownMap.get(smartAnalysis.bestPhoto.id) && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-black text-[10px] border border-amber-500/40">
+                            {language === "ko" ? "종합 점수" : "Overall Score"}: {smartAnalysis.breakdownMap.get(smartAnalysis.bestPhoto.id)!.overallScore}점
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-slate-200 mt-1 font-medium leading-relaxed">
+                        {smartAnalysis.rationale}
+                      </p>
+                    </div>
+                  </div>
+                  {smartAnalysis.bestPhoto.id && smartAnalysis.breakdownMap.get(smartAnalysis.bestPhoto.id) && (
+                    <div className="flex items-center gap-2 shrink-0 bg-black/40 px-3 py-2 rounded-xl border border-white/10 font-mono text-[11px]">
+                      <span className="text-cyan-300 font-bold">{language === "ko" ? "초점" : "Blur"} {smartAnalysis.breakdownMap.get(smartAnalysis.bestPhoto.id)!.blurScore}</span>
+                      <span className="text-slate-600">•</span>
+                      <span className="text-amber-300 font-bold">{language === "ko" ? "노출" : "Exp"} {smartAnalysis.breakdownMap.get(smartAnalysis.bestPhoto.id)!.exposureScore}</span>
+                      <span className="text-slate-600">•</span>
+                      <span className="text-purple-300 font-bold">{language === "ko" ? "구도" : "Comp"} {smartAnalysis.breakdownMap.get(smartAnalysis.bestPhoto.id)!.compositionScore}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Group Comparison Overview Bar */}
               <div className="bg-slate-950/60 border border-white/10 rounded-2xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
                 <div className="flex flex-wrap items-center gap-2 sm:gap-3">
@@ -1272,6 +1346,7 @@ export const DuplicateGroup = ({
                     const idx = group.photos.findIndex((item) => item.id === p.id);
                     setInspectingPhotoIndex(idx >= 0 ? idx : 0);
                   }}
+                  onAnimatePhoto={onAnimatePhoto}
                 />
               ) : localViewMode === "list" ? (
                 <div className="space-y-3">
@@ -1295,6 +1370,7 @@ export const DuplicateGroup = ({
                         bestSize={bestPhoto.size || 0}
                         isAllSameSize={groupComparison.isAllSameSize}
                         onInspect={() => setInspectingPhotoIndex(pIdx)}
+                        onAnimatePhoto={onAnimatePhoto}
                       />
                     );
                   })}
@@ -1338,6 +1414,7 @@ export const DuplicateGroup = ({
                         SystemAPI.openInDefaultApp(p, addNotification);
                       }}
                       onInspect={() => setInspectingPhotoIndex(pIdx)}
+                      onAnimate={onAnimatePhoto}
                     />
                   ))}
                 </div>

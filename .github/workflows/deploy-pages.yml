@@ -25,10 +25,10 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js 22 LTS
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Install Dependencies
@@ -39,9 +39,6 @@ jobs:
 
       - name: Build Web Application (Vite Static Bundle)
         run: npx vite build
-
-      - name: Generate Mobile Artifacts in dist/
-        run: node scripts/build-mobile.js
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5

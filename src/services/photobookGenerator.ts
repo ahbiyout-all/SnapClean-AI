@@ -113,6 +113,34 @@ export const STORY_TONES: {
     descKo: '과장 없는 정제된 문장, 빛과 프레임 중심의 도록 스타일',
     iconName: 'Sparkles',
   },
+  {
+    id: 'nostalgic',
+    labelKo: '아련한 그리움',
+    labelEn: 'Nostalgic',
+    descKo: '오래된 필름처럼 아련하고 따뜻한 추억의 깊이',
+    iconName: 'History',
+  },
+  {
+    id: 'professional',
+    labelKo: '프로페셔널 에디션',
+    labelEn: 'Professional',
+    descKo: '정갈하고 객관적인, 잡지 기사 같은 세련된 기록',
+    iconName: 'Briefcase',
+  },
+  {
+    id: 'cinematic',
+    labelKo: '시네마틱 서사',
+    labelEn: 'Cinematic',
+    descKo: '한 편의 영화처럼 강렬하고 극적인 순간의 재구성',
+    iconName: 'Film',
+  },
+  {
+    id: 'minimalist',
+    labelKo: '극강의 미니멀리즘',
+    labelEn: 'Minimalist',
+    descKo: '모든 수식을 걷어낸, 여백과 본질에만 집중하는 시선',
+    iconName: 'Square',
+  },
 ];
 
 // Helper to format date cleanly
@@ -165,6 +193,34 @@ export function generateToneBasedCaption(
       '단정한 선과 부드러운 명암이 빚어낸 찰나의 프레임.',
       '군더더기 없는 구도에서 발견한 일상의 단아한 미학.',
       '빛의 각도에 따라 잔잔히 변화하는 시간의 윤곽.'
+    ],
+    nostalgic: [
+      '먼지 쌓인 앨범 속에서 다시 피어난 아련한 그날의 기억.',
+      '빛바랜 사진처럼 따뜻하고 애틋한 우리들의 지난 시간.',
+      '그리움의 조각들이 모여 하나의 아름다운 풍경이 됩니다.',
+      '시간이 흘러도 변치 않을 우리들만의 소중한 약속.',
+      '추억이라는 이름으로 남겨진 가장 빛나는 순간들.'
+    ],
+    professional: [
+      '객관적인 시각으로 기록된 현대적인 공간과 인물의 조화.',
+      '정교한 구도와 빛의 설계를 통해 완성된 기록의 가치.',
+      '현장의 분위기를 생생하고 전문적으로 전달하는 시각적 서사.',
+      '기술적 완성도와 예술적 영감이 만나는 지점의 기록.',
+      '세련된 미학적 접근으로 재해석된 공간의 비전.'
+    ],
+    cinematic: [
+      '한 편의 영화처럼 강렬하게 다가오는 빛과 어둠의 대비.',
+      '극적인 앵글로 포착된 찰나의 순간, 멈춰버린 서사.',
+      '프레임 너머로 이어지는 거대한 이야기의 한 장면.',
+      '감각적인 연출과 본능적인 포착이 빚어낸 압도적 영상미.',
+      '주인공이 된 듯한 기분으로 마주하는 세상의 풍경.'
+    ],
+    minimalist: [
+      '오직 본질만을 남긴, 극도의 절제미가 빚어낸 조화.',
+      '비어 있음으로써 더 가득 차오르는 공간의 미학.',
+      '최소한의 선과 면으로 표현된 세상의 윤곽.',
+      '복잡함을 덜어내고 마주하는 순수한 존재의 가치.',
+      '말하지 않음으로써 더 많은 것을 전달하는 침묵의 언어.'
     ]
   };
 
@@ -266,6 +322,34 @@ export function clusterPhotosIntoChapters(
       { title: '4장. 흑과 백 사이의 시간', subtitle: 'Chiaroscuro in focus', prologue: '명암의 뚜렷한 대비 속에서 오롯이 드러나는 피사체의 본질.' },
       { title: '5장. 남겨진 고요', subtitle: 'Pure contemplation', prologue: '모든 장식을 덜어내고 오직 마음에 남겨진 순수한 여운.' },
     ],
+    nostalgic: [
+      { title: '1장. 아련한 첫 기억', subtitle: 'Soft echoes of the past', prologue: '먼지 쌓인 앨범 속에서 다시 피어난 아련한 그날의 기록.' },
+      { title: '2장. 빛바랜 거리의 풍경', subtitle: 'Vintage whispers', prologue: '오래된 필름처럼 따뜻하고 애틋한 우리들의 지난 시간.' },
+      { title: '3장. 그리움의 조각들', subtitle: 'Fragments of longing', prologue: '시간이 흘러도 변치 않을 우리들만의 소중한 약속.' },
+      { title: '4장. 따뜻한 오후의 잔상', subtitle: 'Sepia-toned afternoons', prologue: '노을빛 아래 남겨진 우리들의 다정한 실루엣.' },
+      { title: '5장. 영원히 머물 자리', subtitle: 'Eternal sanctuary', prologue: '추억이라는 이름으로 남겨진 가장 빛나는 순간들.' },
+    ],
+    professional: [
+      { title: '1장. 공간의 비전', subtitle: 'Architectural perspectives', prologue: '정교한 구도와 빛의 설계를 통해 완성된 기록의 가치.' },
+      { title: '2장. 현대적 서사', subtitle: 'Modern narratives', prologue: '객관적인 시각으로 기록된 현대적인 공간과 인물의 조화.' },
+      { title: '3장. 기술적 완성도', subtitle: 'Technical precision', prologue: '현장의 분위기를 생생하고 전문적으로 전달하는 시각적 기록.' },
+      { title: '4장. 미학적 접근', subtitle: 'Aesthetic evaluation', prologue: '기술적 완성도와 예술적 영감이 만나는 지점의 포착.' },
+      { title: '5장. 완벽한 기록', subtitle: 'Definitive archive', prologue: '세련된 미학적 접근으로 재해석된 공간의 비전.' },
+    ],
+    cinematic: [
+      { title: '1장. 오프닝 샷', subtitle: 'The dramatic overture', prologue: '한 편의 영화처럼 강렬하게 다가오는 빛과 어둠의 대비.' },
+      { title: '2장. 클로즈업의 순간', subtitle: 'Emotional intensity', prologue: '극적인 앵글로 포착된 찰나의 순간, 멈춰버린 서사.' },
+      { title: '3장. 프레임 너머의 세계', subtitle: 'Beyond the boundary', prologue: '프레임 너머로 이어지는 거대한 이야기의 한 장면.' },
+      { title: '4장. 영상미의 절정', subtitle: 'Visual symphony', prologue: '감각적인 연출과 본능적인 포착이 빚어낸 압도적 영상미.' },
+      { title: '5장. 거대한 대단원', subtitle: 'The grand finale', prologue: '주인공이 된 듯한 기분으로 마주하는 세상의 풍경.' },
+    ],
+    minimalist: [
+      { title: '1장. 본질의 발견', subtitle: 'Core observations', prologue: '오직 본질만을 남긴, 극도의 절제미가 빚어낸 조화.' },
+      { title: '2장. 비어 있는 충만함', subtitle: 'Fullness of void', prologue: '비어 있음으로써 더 가득 차오르는 공간의 미학.' },
+      { title: '3장. 선과 면의 조화', subtitle: 'Lines and planes', prologue: '최소한의 선과 면으로 표현된 세상의 윤곽.' },
+      { title: '4장. 침묵의 언어', subtitle: 'Silent expressions', prologue: '복잡함을 덜어내고 마주하는 순수한 존재의 가치.' },
+      { title: '5장. 정갈한 마침표', subtitle: 'Quiet resolution', prologue: '말하지 않음으로써 더 많은 것을 전달하는 침묵의 언어.' },
+    ],
   };
 
   const titles = toneChapterTitles[tone] || toneChapterTitles.lyrical;
@@ -334,7 +418,11 @@ export function createPhotobookFromPhotos(
     lyrical: '빛나는 시간의 조각들',
     travel: '낯선 바람이 머문 길목',
     family: '함께여서 눈부신 날들',
-    minimal: '빛과 침묵의 시간'
+    minimal: '빛과 침묵의 시간',
+    nostalgic: '아련한 추억의 깊이',
+    professional: '현대적 기록의 가치',
+    cinematic: '스크린 위의 순간들',
+    minimalist: '순수한 본질의 미학'
   };
 
   const autoTitle = options.title || 
@@ -555,40 +643,11 @@ export async function rewritePhotoCaption(
 
 // Generate reliable inline SVG sample photos when empty
 export function generateSamplePhotos(): PhotoRecord[] {
-  const createSvgDataUrl = (title: string, sub: string, startColor: string, endColor: string) => {
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="100%" height="100%">
-        <defs>
-          <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:${startColor};stop-opacity:1" />
-            <stop offset="100%" style="stop-color:${endColor};stop-opacity:1" />
-          </linearGradient>
-          <radialGradient id="sun" cx="70%" cy="30%" r="40%">
-            <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.3" />
-            <stop offset="100%" style="stop-color:#000000;stop-opacity:0" />
-          </radialGradient>
-        </defs>
-        <rect width="1200" height="800" fill="url(#grad)" />
-        <rect width="1200" height="800" fill="url(#sun)" />
-        <circle cx="840" cy="240" r="100" fill="#ffffff" opacity="0.15" />
-        <path d="M0 600 Q 300 450 600 550 T 1200 500 L 1200 800 L 0 800 Z" fill="#000000" opacity="0.3" />
-        <path d="M0 680 Q 400 580 800 650 T 1200 620 L 1200 800 L 0 800 Z" fill="#000000" opacity="0.4" />
-        <text x="600" y="380" fill="#ffffff" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-weight="900" font-size="44" text-anchor="middle" letter-spacing="2">
-          ${title}
-        </text>
-        <text x="600" y="440" fill="#ffffff" opacity="0.75" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-weight="500" font-size="22" text-anchor="middle" letter-spacing="1">
-          ${sub}
-        </text>
-      </svg>
-    `.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-    return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-  };
-
   return [
     {
       id: 9901,
       originalId: 'sample-1',
-      path: createSvgDataUrl('에메랄드 해변의 오후', '바람과 파도가 머물던 자리', '#0f766e', '#134e4a'),
+      path: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80',
       size: 2450000,
       width: 1920,
       height: 1080,
@@ -599,12 +658,12 @@ export function generateSamplePhotos(): PhotoRecord[] {
       blurScore: 94,
       status: 'analyzed' as const,
       lastModified: Date.now() - 86400000 * 20,
-      type: 'image/svg+xml',
+      type: 'image/jpeg',
     },
     {
       id: 9902,
       originalId: 'sample-2',
-      path: createSvgDataUrl('별빛 쏟아지는 밤하늘', '은하수 아래 따스한 캠프파이어', '#1e1b4b', '#0f172a'),
+      path: 'https://images.unsplash.com/photo-1509114397022-ed747cca3f65?auto=format&fit=crop&w=1200&q=80',
       size: 3100000,
       width: 1920,
       height: 1200,
@@ -615,12 +674,12 @@ export function generateSamplePhotos(): PhotoRecord[] {
       blurScore: 96,
       status: 'analyzed' as const,
       lastModified: Date.now() - 86400000 * 18,
-      type: 'image/svg+xml',
+      type: 'image/jpeg',
     },
     {
       id: 9903,
       originalId: 'sample-3',
-      path: createSvgDataUrl('노을빛 언덕의 미소', '함께 걸어가던 행복한 우리', '#831843', '#4c0519'),
+      path: 'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?auto=format&fit=crop&w=1200&q=80',
       size: 2800000,
       width: 1080,
       height: 1620,
@@ -631,12 +690,12 @@ export function generateSamplePhotos(): PhotoRecord[] {
       blurScore: 89,
       status: 'analyzed' as const,
       lastModified: Date.now() - 86400000 * 15,
-      type: 'image/svg+xml',
+      type: 'image/jpeg',
     },
     {
       id: 9904,
       originalId: 'sample-4',
-      path: createSvgDataUrl('안개 낀 아침 숲길', '싱그러운 풀잎 향기 가득한 산책', '#064e3b', '#022c22'),
+      path: 'https://images.unsplash.com/photo-1511497584788-876761c119ef?auto=format&fit=crop&w=1200&q=80',
       size: 3400000,
       width: 1920,
       height: 1080,
@@ -647,12 +706,12 @@ export function generateSamplePhotos(): PhotoRecord[] {
       blurScore: 92,
       status: 'analyzed' as const,
       lastModified: Date.now() - 86400000 * 12,
-      type: 'image/svg+xml',
+      type: 'image/jpeg',
     },
     {
       id: 9905,
       originalId: 'sample-5',
-      path: createSvgDataUrl('골목길 브런치 카페', '다정한 대화와 향긋한 커피', '#78350f', '#451a03'),
+      path: 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1200&q=80',
       size: 2200000,
       width: 1600,
       height: 1067,
@@ -663,12 +722,12 @@ export function generateSamplePhotos(): PhotoRecord[] {
       blurScore: 90,
       status: 'analyzed' as const,
       lastModified: Date.now() - 86400000 * 8,
-      type: 'image/svg+xml',
+      type: 'image/jpeg',
     },
     {
       id: 9906,
       originalId: 'sample-6',
-      path: createSvgDataUrl('도심 속 황금빛 야경', '빛의 강물이 흐르는 밤', '#172554', '#0f172a'),
+      path: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80',
       size: 3500000,
       width: 1920,
       height: 1080,
@@ -679,7 +738,7 @@ export function generateSamplePhotos(): PhotoRecord[] {
       blurScore: 95,
       status: 'analyzed' as const,
       lastModified: Date.now() - 86400000 * 5,
-      type: 'image/svg+xml',
+      type: 'image/jpeg',
     },
   ];
 }
@@ -831,8 +890,10 @@ export function populateBookWithAiNarrative(
  * Triggers generateEventSummary for an event photobook and populates all pages with emotional captions.
  */
 export async function applyAiNarrativeToPhotobook(
-  book: PhotobookRecord
+  book: PhotobookRecord,
+  forcedTone?: StoryTone
 ): Promise<{ updatedBook: PhotobookRecord; summary: EventSummary }> {
+  const activeTone = forcedTone || book.storyTone || 'lyrical';
   // Extract context-aware tags from the album's photos, locations, dates, chapters, and theme
   const tags: string[] = [
     book.title,
@@ -846,8 +907,8 @@ export async function applyAiNarrativeToPhotobook(
   ].filter(t => typeof t === 'string' && t.trim().length > 0);
 
   const uniqueTags = Array.from(new Set(tags)).slice(0, 15);
-  const summary = await generateEventSummary(uniqueTags.length > 0 ? uniqueTags : ['Memories', 'Cherished Moments', 'Photo Album']);
-  const updatedBook = populateBookWithAiNarrative(book, summary);
+  const summary = await generateEventSummary(uniqueTags.length > 0 ? uniqueTags : ['Memories', 'Cherished Moments', 'Photo Album'], activeTone);
+  const updatedBook = populateBookWithAiNarrative({ ...book, storyTone: activeTone }, summary);
   await savePhotobook(updatedBook);
   return { updatedBook, summary };
 }

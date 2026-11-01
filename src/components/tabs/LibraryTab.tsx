@@ -25,7 +25,8 @@ import {
   AlertCircle,
   Edit2,
   X,
-  Sparkles
+  Sparkles,
+  BarChart3
 } from 'lucide-react';
 import { db, PhotoRecord } from '../../services/db';
 import { useI18n } from '../../i18n/context';
@@ -37,6 +38,8 @@ import { getLocalizedCategory } from '../../utils/categoryUtils';
 import { SystemAPI } from '../../services/systemApi';
 import { Tooltip, InfoTooltip } from '../Tooltip';
 import { fastViewEngine } from '../../services/fastViewEngine';
+import { SearchDistributionChart } from '../SearchDistributionChart';
+import { SmartQuery } from '../../services/geminiService';
 
 const LibMiniThumbnail = ({ thumbnail, photo }: { thumbnail?: Blob; photo?: PhotoRecord }) => {
   const [src, setSrc] = useState<string | null>(() => photo ? fastViewEngine.getInstantThumbnail(photo.path) : null);
@@ -118,6 +121,8 @@ interface LibraryTabProps {
   handleBatchRename?: (photos: PhotoRecord[], pattern: string) => void;
   addNotification: (title: string, message: string, type: 'info' | 'success' | 'warning' | 'error') => void;
   isAiConfigured?: boolean;
+  onAnimatePhoto?: (photo: PhotoRecord) => void;
+  smartQuery?: SmartQuery | null;
 }
 
 export const LibraryTab = ({
@@ -127,6 +132,7 @@ export const LibraryTab = ({
   isProcessingSmartQuery,
   isOnline,
   isAiConfigured = false,
+  smartQuery = null,
   syncing,
   handleSyncLibrary,
   categoryStats,
@@ -167,9 +173,19 @@ export const LibraryTab = ({
   setModal,
   handleOrganize,
   handleBatchRename,
-  addNotification
+  addNotification,
+  onAnimatePhoto
 }: LibraryTabProps) => {
   const { t, language } = useI18n();
+
+  const [showDistributionChart, setShowDistributionChart] = useState<boolean>(() => Boolean(searchQuery.trim()));
+
+  // Auto-expand distribution chart when a smart query is analyzed or search query is applied
+  useEffect(() => {
+    if (smartQuery || searchQuery.trim().length > 1) {
+      setShowDistributionChart(true);
+    }
+  }, [smartQuery]);
 
   const [viewLayout, setViewLayout] = useState<'extra-large' | 'large' | 'medium' | 'small' | 'list' | 'details'>(
     () => (localStorage.getItem('library_view_layout') as any) || 'medium'
@@ -629,6 +645,7 @@ export const LibraryTab = ({
               }
             }}
             onEnhance={handleEnhance} 
+            onAnimate={onAnimatePhoto}
             onContextMenu={handleContextMenu}
             addNotification={addNotification}
             onDoubleClick={(p) => {
@@ -665,7 +682,10 @@ export const LibraryTab = ({
 
         {isAiConfigured && (
           <button 
-            onClick={handleSmartSearch}
+            onClick={() => {
+              setShowDistributionChart(true);
+              handleSmartSearch();
+            }}
             disabled={isProcessingSmartQuery || !searchQuery.trim()}
             className="flex items-center gap-2 px-4 py-3 bg-purple-600/20 hover:bg-purple-600/35 text-purple-200 border border-purple-500/40 rounded-2xl transition-all text-sm font-bold disabled:opacity-40 cursor-pointer shadow-md shadow-purple-500/10 shrink-0"
             title={language === 'ko' ? "Gemini AI 자연어 문맥 분석 검색" : "Gemini AI Semantic Search"}
@@ -1014,7 +1034,31 @@ export const LibraryTab = ({
           </Tooltip>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap sm:flex-nowrap">
+          <Tooltip
+            title={language === 'ko' ? '검색 분포 차트 시각화' : 'Distribution Bar Chart'}
+            content={language === 'ko' ? '스마트 검색된 사진들의 카테고리 및 연도별 분포를 막대 차트(recharts)로 시각화합니다.' : 'Visualize photo distribution across categories and years using recharts.'}
+          >
+            <button 
+              onClick={() => setShowDistributionChart(!showDistributionChart)}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border cursor-pointer ${
+                showDistributionChart 
+                  ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20' 
+                  : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+              }`}
+            >
+              <BarChart3 size={14} className={showDistributionChart ? 'text-white' : 'text-indigo-400'} />
+              <span>{language === 'ko' ? '데이터 시각화 뷰' : 'Chart View'}</span>
+              {filteredLibraryPhotos.length > 0 && (
+                <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                  showDistributionChart ? 'bg-white/20 text-white' : 'bg-indigo-500/20 text-indigo-300'
+                }`}>
+                  {filteredLibraryPhotos.length}
+                </span>
+              )}
+            </button>
+          </Tooltip>
+
           <Tooltip
             title={language === 'ko' ? '탐색기 보기 설정' : 'View Options'}
             content={language === 'ko' ? '그리드 크기, 정렬 기준, 그룹화 방식(카테고리/연도/확장자)을 설정합니다.' : 'Configure grid thumbnail size, sorting criteria, and grouping modes.'}
@@ -1042,6 +1086,30 @@ export const LibraryTab = ({
           </Tooltip>
         </div>
       </div>
+
+      <AnimatePresence>
+        {showDistributionChart && (
+          <SearchDistributionChart
+            photos={filteredLibraryPhotos}
+            searchQuery={searchQuery}
+            smartQuery={smartQuery}
+            isProcessingSmartQuery={isProcessingSmartQuery}
+            onSelectCategory={(cat) => {
+              setSelectedCategories(prev => 
+                prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
+              );
+            }}
+            onSelectYear={(yr) => {
+              setSelectedYears(prev => 
+                prev.includes(yr) ? prev.filter(y => y !== yr) : [...prev, yr]
+              );
+            }}
+            onClose={() => setShowDistributionChart(false)}
+            selectedCategories={selectedCategories}
+            selectedYears={selectedYears}
+          />
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showMap && (

@@ -3,7 +3,7 @@ import { Photo, DuplicateGroup } from '../types';
 import { SystemAPI } from './systemApi';
 import { DedupeEngine } from './dedupeEngine';
 
-export type DedupeRule = 'sharpest' | 'largest' | 'newest' | 'oldest' | 'highest_res' | 'rich_exif' | 'priority_folder';
+export type DedupeRule = 'ai_smart' | 'sharpest' | 'largest' | 'newest' | 'oldest' | 'highest_res' | 'rich_exif' | 'priority_folder';
 
 export interface DedupeOptions {
   matchExactBytes: boolean;        // 100% exact byte/hash match

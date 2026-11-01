@@ -54,7 +54,7 @@ export interface ScanStats {
 }
 
 export type PhotobookTheme = 'classic-hardcover' | 'modern-magazine' | 'vintage-film' | 'art-gallery';
-export type StoryTone = 'lyrical' | 'travel' | 'family' | 'minimal';
+export type StoryTone = 'lyrical' | 'travel' | 'family' | 'minimal' | 'nostalgic' | 'professional' | 'cinematic' | 'minimalist';
 
 export type PhotobookPageLayout = 
   | 'cover'

@@ -99,6 +99,7 @@ import {
   Film,
   ExternalLink,
   BookOpen,
+  HelpCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -144,6 +145,9 @@ import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { UpdateNotificationModal } from "./components/UpdateNotificationModal";
 import { MultiplatformInstallModal } from "./components/MultiplatformInstallModal";
 import { GlobalTooltip } from "./components/GlobalTooltip";
+import { AiVideoGeneratorModal } from "./components/AiVideoGeneratorModal";
+import { BeginnerGuideWizardModal, BeginnerWizardResult } from "./components/BeginnerGuideWizardModal";
+import { generateSamplePhotos } from "./services/photobookGenerator";
 
 // Components
 export default function App() {
@@ -151,6 +155,7 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showScanSourceModal, setShowScanSourceModal] = useState(false);
   const [showMultiplatformModal, setShowMultiplatformModal] = useState(false);
+  const [showBeginnerWizard, setShowBeginnerWizard] = useState(false);
   const { t, language, setLanguage } = useI18n();
 
   const {
@@ -220,6 +225,7 @@ export default function App() {
 
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [motionCreatorPhotos, setMotionCreatorPhotos] = useState<PhotoRecord[] | null>(null);
+  const [animatingPhoto, setAnimatingPhoto] = useState<PhotoRecord | null>(null);
   const allowedCloseRef = useRef(false);
 
   useEffect(() => {
@@ -1367,6 +1373,145 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    const handleOpenWizard = () => setShowBeginnerWizard(true);
+    window.addEventListener("open-beginner-wizard", handleOpenWizard);
+    return () => window.removeEventListener("open-beginner-wizard", handleOpenWizard);
+  }, []);
+
+  const handleExecuteWizardAction = async (result: BeginnerWizardResult) => {
+    setShowBeginnerWizard(false);
+    switch (result.actionType) {
+      case "clean-auto":
+        setActiveTab("duplicates");
+        setAutoResolveRule("sharpest");
+        addNotification(
+          language === "ko" ? "선명한 사진 우선 자동 정리" : "Auto Clean Sharpest",
+          language === "ko"
+            ? "가장 선명하고 해상도 높은 사진만 남기도록 설정되었습니다. 상단의 '자동 정리' 버튼을 눌러 바로 정리할 수 있습니다."
+            : "Configured to automatically keep the sharpest photos. Click Auto Resolve to clean.",
+          "info"
+        );
+        break;
+      case "clean-manual":
+        setActiveTab("duplicates");
+        addNotification(
+          language === "ko" ? "직접 확인하며 정리" : "Manual Review Mode",
+          language === "ko"
+            ? "중복 사진들을 한 장씩 직접 눈으로 확인하며 남길 사진을 결정하세요."
+            : "Review duplicate groups side-by-side to choose which to keep.",
+          "info"
+        );
+        break;
+      case "clean-junk":
+        setActiveTab("duplicates");
+        setDedupeOptions((prev) => ({
+          ...prev,
+          strictness: 0.92,
+        }));
+        addNotification(
+          language === "ko" ? "흐린 사진 및 저화질 탐지" : "Blurry & Low-Value Scan",
+          language === "ko"
+            ? "흔들리거나 초점이 안 맞은 사진을 우선 탐지하도록 감도를 조정했습니다."
+            : "Adjusted threshold to detect blurry and low-quality photos first.",
+          "info"
+        );
+        break;
+      case "photobook-family":
+        setActiveTab("photobook");
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("photobook-set-view-mode", { detail: "family" }));
+        }, 150);
+        addNotification(
+          language === "ko" ? "패밀리 앨범 모드" : "Family Album Mode",
+          language === "ko"
+            ? "가로 방향의 넓은 화면에서 월별·일별로 사진을 보는 패밀리 앨범 모드로 전환되었습니다."
+            : "Switched to widescreen Family Album view organized by months and days.",
+          "info"
+        );
+        break;
+      case "photobook-flipbook":
+        setActiveTab("photobook");
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("photobook-set-view-mode", { detail: "book" }));
+        }, 150);
+        addNotification(
+          language === "ko" ? "3D 플립북 모드" : "3D Flipbook Mode",
+          language === "ko"
+            ? "실제 책장을 넘기는 손맛이 있는 3D 양장본 사진첩 모드로 전환되었습니다."
+            : "Switched to interactive 3D hardcover flipbook view.",
+          "info"
+        );
+        break;
+      case "photobook-theater":
+        setActiveTab("photobook");
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("photobook-launch-theater"));
+        }, 200);
+        addNotification(
+          language === "ko" ? "극장 슬라이드쇼 모드" : "Theater Mode",
+          language === "ko"
+            ? "전체화면에서 감미로운 음악과 함께 감상하는 극장 슬라이드쇼를 실행합니다."
+            : "Launching Fullscreen Theater Slideshow with background music.",
+          "info"
+        );
+        break;
+      case "photobook-create":
+        setActiveTab("photobook");
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("photobook-open-create-wizard"));
+        }, 150);
+        break;
+      case "browse-timeline":
+        setActiveTab("library");
+        break;
+      case "browse-people":
+        setActiveTab("people");
+        break;
+      case "browse-search":
+        setActiveTab("library");
+        setTimeout(() => {
+          const searchInput = document.querySelector('input[placeholder*="검색"], input[placeholder*="Search"]') as HTMLInputElement;
+          if (searchInput) {
+            searchInput.focus();
+          }
+        }, 200);
+        break;
+      case "import-folder":
+        handleSelectFolder();
+        break;
+      case "import-files":
+        handleSelectPhotos();
+        break;
+      case "import-demo":
+        try {
+          addNotification(
+            language === "ko" ? "체험용 사진 로딩 중" : "Loading Demo Photos",
+            language === "ko" ? "체험용 샘플 사진들을 불러오는 중입니다..." : "Generating demonstration photos...",
+            "info"
+          );
+          const samples = generateSamplePhotos();
+          await db.photos.bulkPut(samples);
+          const count = await db.photos.count();
+          setDbCount(count);
+          await loadLibrary();
+          addNotification(
+            language === "ko" ? "체험 준비 완료" : "Demo Ready",
+            language === "ko"
+              ? `체험용 사진 ${samples.length}장이 추가되었습니다! 디지털 사진첩에서 바로 감상해보세요.`
+              : `Added ${samples.length} sample photos! Check them out in Digital Photobook.`,
+            "success"
+          );
+          setActiveTab("photobook");
+        } catch (err) {
+          console.error("Failed to load demo photos", err);
+        }
+        break;
+      default:
+        break;
+    }
+  };
+
   const cameraModels = useMemo(() => {
     const models = new Set<string>();
     libraryPhotos.forEach((p) => {
@@ -1771,6 +1916,32 @@ export default function App() {
               </button>
             )}
 
+            <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-500/10 via-indigo-500/10 to-purple-500/10 border border-amber-500/30 shadow-lg relative overflow-hidden group mb-4">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                    <HelpCircle size={15} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-200">
+                      {language === 'ko' ? "메뉴가 복잡한가요?" : "Feeling lost?"}
+                    </h4>
+                    <p className="text-[10px] text-slate-400 leading-tight">
+                      {language === 'ko' ? "간단한 질문에 답하고 바로 시작" : "Answer 2 questions to start"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBeginnerWizard(true)}
+                className="w-full mt-1 py-2 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/30 text-amber-200 text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm active:scale-98"
+              >
+                <span>{language === 'ko' ? "초보자 질문 마법사 열기" : "Open Guide Wizard"}</span>
+                <ArrowRight size={13} className="text-amber-400" />
+              </button>
+            </div>
+
             <div className="glass p-4 rounded-2xl relative overflow-hidden group">
               <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/10 rounded-full -mr-12 -mt-12" />
               <p className="text-[10px] text-slate-400 uppercase font-bold mb-2">
@@ -1840,6 +2011,17 @@ export default function App() {
             </div>
 
             <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 w-full sm:w-auto flex-wrap sm:flex-nowrap">
+              <button
+                type="button"
+                onClick={() => setShowBeginnerWizard(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 via-rose-500/15 to-indigo-500/20 hover:from-amber-500/30 hover:to-indigo-500/30 text-amber-200 border border-amber-500/40 font-bold text-xs shadow-md shadow-amber-500/10 transition-all cursor-pointer group shrink-0"
+                title={language === 'ko' ? "사용자 질문 마법사 열기" : "Open Guide Wizard"}
+              >
+                <HelpCircle size={15} className="text-amber-400 group-hover:scale-110 transition-transform" />
+                <span className="hidden sm:inline font-bold">{language === 'ko' ? "질문으로 시작하기 (마법사)" : "Guide Wizard"}</span>
+                <span className="sm:hidden font-bold">{language === 'ko' ? "마법사" : "Wizard"}</span>
+              </button>
+
               <PWAInstallButton language={language} />
 
               {peerCount > 0 && (
@@ -2198,6 +2380,7 @@ export default function App() {
                 setDedupeOptions={setDedupeOptions}
                 onRescanDuplicates={detectDuplicates}
                 onCreatePhotobook={() => setActiveTab("photobook")}
+                onAnimatePhoto={setAnimatingPhoto}
               />
             )}
 
@@ -2210,11 +2393,13 @@ export default function App() {
                   setIsAiKeyModalOpen(true);
                 }}
                 onSwitchToDuplicates={() => setActiveTab("duplicates")}
+                onAnimatePhoto={setAnimatingPhoto}
               />
             )}
 
             {activeTab === "library" && (
               <LibraryTab
+                smartQuery={smartQuery}
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}
                 handleSmartSearch={handleSmartSearch}
@@ -2265,6 +2450,7 @@ export default function App() {
                 handleOrganize={handleOrganize}
                 handleBatchRename={handleBatchRename}
                 addNotification={addNotification}
+                onAnimatePhoto={setAnimatingPhoto}
               />
             )}
 
@@ -4169,6 +4355,26 @@ export default function App() {
                 </nav>
 
                 <div className="mt-auto pt-4 border-t border-white/10 flex flex-col gap-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setShowBeginnerWizard(true);
+                    }}
+                    className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/20 via-indigo-500/15 to-purple-500/20 border border-amber-500/40 text-amber-200 text-xs font-bold transition-all shadow-lg shadow-amber-950/20 cursor-pointer active:scale-98"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-amber-500/25 border border-amber-400/40 flex items-center justify-center text-amber-300">
+                        <HelpCircle size={16} />
+                      </div>
+                      <div className="text-left">
+                        <p className="font-black text-amber-100">{language === 'ko' ? "질문으로 시작하기 (마법사)" : "Beginner Guide Wizard"}</p>
+                        <p className="text-[10px] text-amber-300/80 font-normal">{language === 'ko' ? "2개 질문에 답하고 즉시 시작" : "Quick guided setup in 2 steps"}</p>
+                      </div>
+                    </div>
+                    <ArrowRight size={14} className="text-amber-300" />
+                  </button>
+
                   <div className="glass p-4 rounded-2xl relative overflow-hidden group">
                     <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/10 rounded-full -mr-12 -mt-12" />
                     <p className="text-[10px] text-slate-400 uppercase font-bold mb-2">
@@ -4227,6 +4433,15 @@ export default function App() {
           <MotionCreatorModal
             photos={motionCreatorPhotos}
             onClose={() => setMotionCreatorPhotos(null)}
+            addNotification={addNotification}
+            language={language}
+          />
+        )}
+
+        {animatingPhoto && (
+          <AiVideoGeneratorModal
+            photo={animatingPhoto}
+            onClose={() => setAnimatingPhoto(null)}
             addNotification={addNotification}
             language={language}
           />
@@ -4324,6 +4539,13 @@ export default function App() {
           isOpen={showMultiplatformModal}
           onClose={() => setShowMultiplatformModal(false)}
           language={language as 'ko' | 'en'}
+        />
+
+        <BeginnerGuideWizardModal
+          isOpen={showBeginnerWizard}
+          onClose={() => setShowBeginnerWizard(false)}
+          onExecute={handleExecuteWizardAction}
+          photoCount={dbCount}
         />
 
         {/* Global Floating Tooltip Engine */}

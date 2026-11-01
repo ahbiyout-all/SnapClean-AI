@@ -80,14 +80,14 @@ export interface EventSummary {
   mood: string;
 }
 
-export async function generateEventSummary(tags: string[]): Promise<EventSummary> {
+export async function generateEventSummary(tags: string[], storyTone: string = "lyrical"): Promise<EventSummary> {
   const fallback: EventSummary = {
     title: "Memories in the Making",
     story: "A collection of moments captured and preserved for the future.",
     mood: "Sentimental"
   };
 
-  return callAiProxy<EventSummary>("event-summary", { tags }, fallback);
+  return callAiProxy<EventSummary>("event-summary", { tags, storyTone }, fallback);
 }
 
 export interface PhotoAnalysis {
@@ -174,16 +174,52 @@ export async function generatePhotobookStory(
   return callAiProxy<PhotobookAiStory>("photobook-story", { title, theme, photoDetails, storyTone }, fallback);
 }
 
+export async function animateImageIntoVideo(
+  imageData: string,
+  prompt: string = "",
+  aspectRatio: "16:9" | "9:16" = "16:9"
+): Promise<{ videoData: string; mimeType: string } | null> {
+  const res = await callAiProxy<{ videoData: string; mimeType: string }>(
+    "animate-image",
+    { imageData, prompt, aspectRatio },
+    null
+  );
+  return res;
+}
+
 export async function rewritePhotobookCaption(
-  photoContext: any,
-  storyTone: string = "lyrical",
+  meta: { location?: string; date?: string; score?: number },
+  tone: string,
   currentCaption?: string
 ): Promise<string> {
-  const fallback = currentCaption || "마음 깊이 오래도록 간직하고픈 아름다운 한 컷";
-  const res = await callAiProxy<{ caption: string }>(
-    "photobook-caption-rewrite",
-    { photoContext, storyTone },
-    { caption: fallback }
-  );
-  return res?.caption || fallback;
+  const fallback = currentCaption || "A beautiful memory captured in time.";
+  return callAiProxy<string>("rewrite-caption", { meta, tone, currentCaption }, fallback);
+}
+
+export interface RelevanceResult {
+  irrelevantPhotoIds: (string | number)[];
+  reasons: Record<string, string>;
+}
+
+/**
+ * Uses AI to identify photos that are meaningless, low-quality, or irrelevant to a memory photobook.
+ * Filters out screenshots, receipts, documents, and extremely blurry photos.
+ */
+export async function filterIrrelevantPhotos(
+  photos: { id: string | number; tags: string[]; category?: string; aestheticScore?: number; ocrText?: string }[],
+  albumTitle?: string
+): Promise<RelevanceResult> {
+  const fallback: RelevanceResult = {
+    irrelevantPhotoIds: photos
+      .filter(p => {
+        const isDocument = p.category?.toLowerCase() === 'document' || p.category?.toLowerCase() === 'receipt';
+        const isLowAesthetic = (p.aestheticScore || 5) < 3.5;
+        const hasIrrelevantTags = p.tags.some(t => ['screenshot', 'text', 'receipt', 'document', 'form'].includes(t.toLowerCase()));
+        return isDocument || isLowAesthetic || hasIrrelevantTags;
+      })
+      .map(p => p.id),
+    reasons: {}
+  };
+
+  return callAiProxy<RelevanceResult>("filter-relevance", { photos, albumTitle }, fallback);
 }

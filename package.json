@@ -1,7 +1,7 @@
 {
-  "name": "react-example",
+  "name": "snapclean-ai",
   "private": true,
-  "version": "2.4.0",
+  "version": "2.5.0",
   "author": "AhBiYout",
   "license": "MIT",
   "description": "AI Photo Management",
@@ -28,7 +28,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@google/genai": "^1.52.0",
+    "@google/genai": "^2.31.0",
     "@tailwindcss/vite": "^4.1.14",
     "@tauri-apps/api": "2.0.0",
     "@tauri-apps/plugin-dialog": "2.0.0",

@@ -2,7 +2,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { syncVersion, getAppVersion } from './version-manager.js';
+import { syncVersion } from './version-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,12 +10,7 @@ const rootDir = path.resolve(__dirname, '..');
 
 const GITHUB_ACCOUNT = process.env.GITHUB_ACCOUNT || 'AhBiYout-all';
 const GITHUB_USERNAME = process.env.GITHUB_USER_NAME || 'AhBiYout-all';
-
-function getDefaultRepoName() {
-  return process.env.GITHUB_REPO || 'SnapClean-AI';
-}
-
-const GITHUB_REPO = getDefaultRepoName();
+const GITHUB_REPO = process.env.GITHUB_REPO || 'SnapCleanAI';
 const REMOTE_URL = `https://github.com/${GITHUB_ACCOUNT}/${GITHUB_REPO}.git`;
 
 function runCmd(cmd, allowFail = false) {
@@ -30,12 +25,12 @@ function runCmd(cmd, allowFail = false) {
   }
 }
 
-// 1. Audit files: check for unwanted binaries or temp files
+// 1. Hygiene Audit: Remove temporary or binary files before push
 function auditRepositoryHygiene() {
   console.log('\n🔍 [Hygiene Audit] Inspecting workspace for forbidden files...');
 
   const forbiddenExtensions = [
-    '.exe', '.dll', '.so', '.dylib', '.pdb', '.tmp', '.apk', '.ipa', '.mobileconfig',
+    '.dll', '.so', '.dylib', '.pdb', '.tmp', '.apk', '.ipa', '.mobileconfig',
     '.aab', '.log', '.bak', '.swp'
   ];
   const forbiddenNames = [
@@ -54,25 +49,22 @@ function auditRepositoryHygiene() {
   }
 
   if (violations.length > 0) {
-    console.warn(`⚠️ Warning: Found forbidden or temporary files in project root:`);
-    violations.forEach((v) => console.warn(`   - ${v}`));
-    console.warn(`Removing or verifying .gitignore rules...`);
-
+    console.warn(`⚠️ Cleaning up temporary or unneeded files before git push:`);
     for (const v of violations) {
       const fullPath = path.join(rootDir, v);
       if (fs.existsSync(fullPath)) {
         fs.rmSync(fullPath, { recursive: true, force: true });
-        console.log(`   ✓ Cleaned up: ${v}`);
+        console.log(`   ✓ Removed: ${v}`);
       }
     }
   } else {
-    console.log('✓ Clean workspace: No unwanted binary or temporary files found in root.');
+    console.log('✓ Clean workspace: Only essential source code and configurations present.');
   }
 }
 
 // 2. Ensure Git repository and Remote Origin
 function ensureGitRepo() {
-  console.log(`\n📦 [Git Configuration] Target Repo: ${GITHUB_ACCOUNT}/${GITHUB_REPO}`);
+  console.log(`\n📦 [Git Config] Developer: AhBiYout | Target Repo: ${GITHUB_ACCOUNT}/${GITHUB_REPO}`);
 
   const isGit = fs.existsSync(path.join(rootDir, '.git'));
   if (!isGit) {
@@ -80,17 +72,17 @@ function ensureGitRepo() {
     runCmd('git init');
   }
 
-  // Ensure user identity is configured
+  // Ensure clean developer identity
   const currentUserName = runCmd('git config user.name', true);
   if (!currentUserName || currentUserName !== GITHUB_USERNAME) {
     runCmd(`git config user.name "${GITHUB_USERNAME}"`);
-    console.log(`✓ Configured git user.name: ${GITHUB_USERNAME}`);
+    console.log(`✓ Set git user.name: ${GITHUB_USERNAME}`);
   }
 
   const currentUserEmail = runCmd('git config user.email', true);
-  if (!currentUserEmail) {
-    runCmd('git config user.email "redmoon@hanil.org"');
-    console.log('✓ Configured git user.email: redmoon@hanil.org');
+  if (!currentUserEmail || currentUserEmail.includes('hanil.org')) {
+    runCmd('git config user.email "AhBiYout-all@users.noreply.github.com"');
+    console.log('✓ Set git user.email: AhBiYout-all@users.noreply.github.com (No personal email)');
   }
 
   // Ensure default branch is main
@@ -99,101 +91,62 @@ function ensureGitRepo() {
     runCmd('git branch -m main', true);
   }
 
-  // Check remote origin
-  const remotes = runCmd('git remote', true);
-  if (!remotes.includes('origin')) {
-    console.log(`Adding remote origin: ${REMOTE_URL}`);
+  // Set remote origin
+  const existingRemote = runCmd('git remote get-url origin', true);
+  if (!existingRemote) {
     runCmd(`git remote add origin ${REMOTE_URL}`);
-  } else {
-    const currentOrigin = runCmd('git remote get-url origin', true);
-    if (!currentOrigin.includes(GITHUB_REPO)) {
-      console.log(`Updating remote origin to: ${REMOTE_URL}`);
-      runCmd(`git remote set-url origin ${REMOTE_URL}`);
-    }
+    console.log(`✓ Added remote origin: ${REMOTE_URL}`);
+  } else if (existingRemote !== REMOTE_URL) {
+    runCmd(`git remote set-url origin ${REMOTE_URL}`);
+    console.log(`✓ Updated remote origin: ${REMOTE_URL}`);
   }
-  console.log(`✓ Git remote verified: ${REMOTE_URL} (Branch: main)`);
 }
 
-// 3. Automated Version Sync & Git Commit / Tagging
-export async function syncAndCommit(options = {}) {
-  // Step A: Audit workspace
+// 3. Stage and Commit Core Code
+export async function syncAndCommitCore() {
   auditRepositoryHygiene();
-
-  // Step B: Ensure git setup
   ensureGitRepo();
 
-  // Step C: Run Version Sync
-  console.log('\n🔄 [Version Sync] Synchronizing version across all configurations...');
   const buildInfo = await syncVersion();
   const version = buildInfo.version;
-  const tag = `v${version}`;
 
-  // Step D: Stage legitimate files
-  console.log('\n📥 [Git Staging] Staging tracked source files...');
+  console.log(`\n📌 Staging essential source files for version: v${version}...`);
   runCmd('git add .');
 
-  // Step E: Check if git status has changes
   const status = runCmd('git status --porcelain', true);
-  const commitMsg = options.message || `release: ${tag} - ${buildInfo.latestPatchSummary || 'update codebase and version synchronization'}`;
-
-  if (status) {
-    console.log(`💾 [Git Commit] Committing changes with message:\n   "${commitMsg}"`);
-    runCmd(`git commit -m "${commitMsg}"`);
-  } else {
-    console.log('ℹ️ Working tree clean. No new code changes to commit.');
+  if (!status) {
+    console.log('✓ Repository working tree is clean. No uncommitted changes.');
+    return { version, committed: false };
   }
 
-  // Step F: Check Tag
-  const existingTags = runCmd('git tag', true).split('\n');
-  if (!existingTags.includes(tag)) {
-    console.log(`🏷️ [Git Tag] Creating tag: ${tag}`);
-    runCmd(`git tag -a ${tag} -m "Release ${tag}"`);
-    console.log(`✓ Tag ${tag} created successfully.`);
-  } else {
-    console.log(`✓ Tag ${tag} already exists.`);
-  }
+  const commitMsg = `feat(release): update SnapClean AI source code [v${version}]`;
+  console.log(`Committing: "${commitMsg}"...`);
+  runCmd(`git commit -m "${commitMsg}"`);
 
-  return { version, tag, buildInfo };
+  return { version, committed: true };
 }
 
 // 4. Push to GitHub
-export async function pushToGitHub(options = {}) {
-  const { version, tag } = await syncAndCommit(options);
+export async function pushToGitHub() {
+  const { version } = await syncAndCommitCore();
+  console.log(`\n🚀 Pushing code to ${REMOTE_URL} (main)...`);
 
-  console.log(`\n🚀 [GitHub Push] Pushing branch 'main' and tags to ${REMOTE_URL}...`);
   try {
-    runCmd('git push -u origin main', true);
-    runCmd(`git push origin ${tag}`, true);
-    console.log(`\n🎉 Successfully pushed code and tag ${tag} to GitHub!`);
-    console.log(`👉 Repository URL: https://github.com/${GITHUB_ACCOUNT}/${GITHUB_REPO}`);
-    console.log(`👉 Releases URL:   https://github.com/${GITHUB_ACCOUNT}/${GITHUB_REPO}/releases`);
-  } catch (err) {
-    console.warn(`\n⚠️ Note: Git push requires GitHub authentication credentials on your local machine.`);
-    console.warn(`If pushing failed due to credentials, run:`);
-    console.warn(`   git push -u origin main`);
-    console.warn(`   git push origin ${tag}`);
+    runCmd('git push -u origin main');
+    console.log(`\n✨ Successfully pushed SnapClean AI v${version} to GitHub!`);
+    console.log(`   Repository URL: ${REMOTE_URL}`);
+    console.log(`   Developer: AhBiYout (AhBiYout-all)`);
+    console.log(`   Official Blog: https://ahbiyoutvibe.blogspot.com/\n`);
+  } catch (e) {
+    console.warn('\n⚠️ Push notice: Check remote credentials or network connection.');
   }
 }
 
-// CLI
-async function main() {
-  const action = process.argv[2] || 'sync';
-  const customMessage = process.argv.slice(3).join(' ');
-
-  if (action === 'push') {
-    await pushToGitHub({ message: customMessage });
-  } else if (action === 'release' || action === 'sync') {
-    await syncAndCommit({ message: customMessage });
-  } else {
-    console.log('Usage:');
-    console.log('  node scripts/github-sync.js sync');
-    console.log('  node scripts/github-sync.js push [commit-message]');
-  }
-}
-
+const action = process.argv[2] || 'sync';
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  main().catch((err) => {
-    console.error('Error in github-sync:', err);
-    process.exit(1);
-  });
+  if (action === 'push') {
+    pushToGitHub().catch(console.error);
+  } else {
+    syncAndCommitCore().catch(console.error);
+  }
 }

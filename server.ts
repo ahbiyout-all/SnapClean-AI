@@ -387,6 +387,63 @@ ${JSON.stringify(photoDetails, null, 2)}
     }
   });
 
+  // AI Route: Animate Image into Video (Omni Flash)
+  app.post("/api/ai/animate-image", async (req, res) => {
+    const { imageData, prompt = "", aspectRatio = "16:9", customApiKey } = req.body || {};
+    const effectiveKey = customApiKey || (req.headers["x-custom-api-key"] as string) || process.env.GEMINI_API_KEY;
+
+    if (!effectiveKey) {
+      return res.status(401).json({ success: false, error: "API Key required for video generation" });
+    }
+
+    try {
+      const client = getGeminiClient(effectiveKey);
+      
+      // Strip prefix if present
+      const cleanBase64 = imageData.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
+
+      const interaction = await client.interactions.create({
+        model: 'gemini-omni-1.1-flash',
+        input: [
+          {
+            type: "image",
+            mime_type: "image/jpeg",
+            data: cleanBase64,
+          },
+          {
+            type: "text",
+            text: prompt || "Animate this photo with subtle natural movement.",
+          }
+        ],
+        background: false,
+        store: false,
+        stream: false,
+        response_format: {
+          type: 'video',
+          aspect_ratio: aspectRatio as any,
+          duration: '5s',
+          resolution: '720p',
+        }
+      }, { timeout: 300000 }); // 5 min timeout
+
+      const videoPart = interaction.output_video;
+      if (videoPart && videoPart.data) {
+        return res.json({ 
+          success: true, 
+          data: { 
+            videoData: videoPart.data, 
+            mimeType: videoPart.mime_type || "video/mp4" 
+          } 
+        });
+      }
+
+      throw new Error("No video data returned from model");
+    } catch (err: any) {
+      console.error("[Animate Image Error]:", err);
+      return res.status(500).json({ success: false, error: err.message || "Failed to animate image" });
+    }
+  });
+
   // Multiplatform Mobile & Desktop Downloads
   app.get("/api/download/:artifact", async (req, res) => {
     const { artifact } = req.params;
@@ -469,24 +526,61 @@ ${JSON.stringify(photoDetails, null, 2)}
     return res.status(400).json({ error: "Unknown download artifact requested" });
   });
 
-  // Solve web-local memory losses on refresh by serving highly stylized SVG placeholders dynamically
+  const CURATED_UNSPLASH_PHOTOS = [
+    'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1519046904884-53103b34b206?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1511497584788-876761c119ef?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1495616811223-4d98c6e9c869?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1509114397022-ed747cca3f65?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1476514525535-ce74f452623d?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=1200&q=80',
+  ];
+
+  function getUnsplashPhotoForPath(filePath: string): string {
+    let hash = 0;
+    const str = filePath || 'default_photo';
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    const index = Math.abs(hash) % CURATED_UNSPLASH_PHOTOS.length;
+    return CURATED_UNSPLASH_PHOTOS[index];
+  }
+
+  // Solve web-local memory losses on refresh by redirecting to curated high-res photos
   function servePlaceholder(filePath: string, res: any) {
     const isVideo = filePath.toLowerCase().match(/\.(mp4|mov|avi|mkv|webm)$/);
     const isPdf = filePath.toLowerCase().endsWith('.pdf');
+    
+    // For images, redirect to a beautiful, realistic photography asset
+    if (!isVideo && !isPdf) {
+      const photoUrl = getUnsplashPhotoForPath(filePath);
+      return res.redirect(302, photoUrl);
+    }
+
     const fileName = path.basename(filePath);
     
-    let startColor = '#3b82f6'; // blue
+    let startColor = '#3b82f6';
     let endColor = '#1d4ed8';
-    let typeLabel = 'IMAGE';
+    let typeLabel = 'MEDIA';
     let iconMarkup = `<circle cx="120" cy="80" r="25" fill="none" stroke="white" stroke-width="6"/><path d="M50 140 L100 90 L130 120 L170 70 L220 140 Z" fill="white" opacity="0.8"/>`;
 
     if (isVideo) {
-      startColor = '#ec4899'; // pink
+      startColor = '#ec4899';
       endColor = '#be185d';
       typeLabel = 'VIDEO';
       iconMarkup = `<polygon points="100,55 155,90 100,125" fill="white" stroke="white" stroke-linecap="round" stroke-linejoin="round" stroke-width="6"/>`;
     } else if (isPdf) {
-      startColor = '#8b5cf6'; // purple
+      startColor = '#8b5cf6';
       endColor = '#6d28d9';
       typeLabel = 'DOCUMENT';
       iconMarkup = `<rect x="85" y="45" width="70" height="90" rx="6" fill="none" stroke="white" stroke-width="6"/><line x1="100" y1="70" x2="140" y2="70" stroke="white" stroke-width="4"/><line x1="100" y1="95" x2="140" y2="95" stroke="white" stroke-width="4"/>`;
@@ -510,9 +604,6 @@ ${JSON.stringify(photoDetails, null, 2)}
       <rect x="15" y="142" width="210" height="26" rx="6" fill="black" opacity="0.35" />
       <text x="120" y="159" fill="white" font-family="system-ui, sans-serif" font-weight="900" font-size="9" text-anchor="middle" letter-spacing="0.5">
         ${fileName.toUpperCase()}
-      </text>
-      <text x="120" y="24" fill="white" opacity="0.5" font-family="system-ui, sans-serif" font-weight="950" font-size="7" text-anchor="middle" letter-spacing="1.5">
-        ${typeLabel} STREAM BUFFER
       </text>
     </svg>`;
 

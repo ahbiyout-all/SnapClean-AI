@@ -1,9 +1,19 @@
-# Dependencies
+# =========================================================================
+# SnapClean AI - Official GitHub Exclusions (.gitignore)
+# Developer: AhBiYout (AhBiYout-all)
+# Repository: https://github.com/AhBiYout-all/SnapCleanAI
+# =========================================================================
+
+# Dependencies & Lockfiles (npm package-lock.json is single source of truth)
 node_modules/
 .pnp
 .pnp.js
+bun.lock
+bun.lockb
+yarn.lock
+pnpm-lock.yaml
 
-# Build Artifacts & Distribution
+# Build Output & Compiled Bundles
 dist/
 dist-ssr/
 build/
@@ -14,7 +24,7 @@ obj/
 .vite/
 .parcel-cache/
 
-# Binary Executables & Dynamic Libraries (Windows, Mac, Linux)
+# Binary Executables & Portable Output
 *.exe
 *.dll
 *.so
@@ -26,7 +36,15 @@ obj/
 snapcleanai-portable*
 snapclean_core*
 
-# Mobile Packages (Android & iOS)
+# Rust & Tauri Native Builds
+src-tauri/target/
+crates/*/target/
+target/
+Cargo.lock
+**/pkg/
+*.wasm
+
+# Mobile Legacy Artifacts
 *.apk
 *.aab
 *.ipa
@@ -39,15 +57,7 @@ android/.gradle/
 ios/build/
 ios/Pods/
 
-# Rust & Tauri Builds & WASM artifacts
-src-tauri/target/
-crates/*/target/
-target/
-Cargo.lock
-**/pkg/
-*.wasm
-
-# Test Coverage & Temp & Runtime Storage
+# Storage & Runtime Cache
 coverage/
 .nyc_output/
 *.tmp
@@ -57,12 +67,10 @@ coverage/
 *~
 public/mock_storage/*
 !public/mock_storage/.gitkeep
-
-# AI Studio & Internal Cache
 .aistudio/
 .cache/
 
-# Environment Variables & Credentials
+# Environment, Credentials & Private Keys (NEVER UPLOAD PERSONAL DATA)
 .env
 .env.*
 !.env.example
@@ -76,7 +84,7 @@ id_rsa*
 firebase-applet-config.json
 serviceAccountKey.json
 
-# Operating System Files
+# Operating System Noise
 .DS_Store
 .DS_Store?
 ._*
@@ -86,7 +94,7 @@ ehthumbs.db
 Thumbs.db
 desktop.ini
 
-# IDE & Editor Configuration
+# IDE Settings
 .idea/
 .vscode/*
 !.vscode/extensions.json
@@ -107,19 +115,11 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
-# Duplicate Lockfiles (npm is primary single source of truth)
-bun.lock
-bun.lockb
-yarn.lock
-pnpm-lock.yaml
-
-# Temporary & Migration Scripts
-*replace_keys*
-
-# Local Deployment & Push Automation Scripts
+# Local Developer Push Batch Scripts (EXCLUDED FROM GITHUB UPLOAD)
+*.bat
 github-push.bat
+push_to_github.bat
+build-mobile.bat
+build.bat
 scripts/github-push.bat
-*github-push*.bat
-

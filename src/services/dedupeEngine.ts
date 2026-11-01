@@ -2,6 +2,8 @@ import { db, PhotoRecord } from './db';
 import { createErrorPayload, OperationType } from '../utils/errorUtils';
 import { FunnelEngine } from './funnelEngine';
 
+import { SmartDuplicateSelector } from './smartDuplicateSelector';
+
 export interface DedupeGroup {
   id: string;
   type: 'exact' | 'similar';
@@ -278,9 +280,18 @@ export class DedupeEngine {
    */
   static getBestPhoto(
     group: PhotoRecord[], 
-    rule: 'sharpest' | 'largest' | 'newest' | 'oldest' | 'highest_res' | 'rich_exif' | 'priority_folder' = 'sharpest',
+    rule: 'ai_smart' | 'sharpest' | 'largest' | 'newest' | 'oldest' | 'highest_res' | 'rich_exif' | 'priority_folder' = 'sharpest',
     priorityFolder?: string
   ): PhotoRecord {
+    if (!group || group.length === 0) {
+      return {} as PhotoRecord;
+    }
+
+    // AI Smart Selection evaluates Blur, Exposure, and Composition synthetically
+    if (rule === 'ai_smart') {
+      return SmartDuplicateSelector.getSmartBestPhoto(group).bestPhoto;
+    }
+
     return [...group].sort((a, b) => {
       const aIsVideo = a.type?.startsWith('video/');
       const bIsVideo = b.type?.startsWith('video/');

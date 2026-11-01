@@ -45,6 +45,7 @@ export interface DuplicateExplorerTableProps {
   foldersList: string[];
   isMultiFolder: boolean;
   onInspect?: (photo: PhotoRecord) => void;
+  onAnimatePhoto?: (photo: PhotoRecord) => void;
 }
 
 type SortColumn =
@@ -199,6 +200,7 @@ export const DuplicateExplorerTable: React.FC<DuplicateExplorerTableProps> = ({
   foldersList,
   isMultiFolder,
   onInspect,
+  onAnimatePhoto,
 }) => {
   const [sortCol, setSortCol] = useState<SortColumn>("status");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -671,6 +673,31 @@ export const DuplicateExplorerTable: React.FC<DuplicateExplorerTableProps> = ({
                   {/* Actions */}
                   <td className="p-3 text-right pr-4 font-sans">
                     <div className="flex items-center justify-end gap-1.5">
+                      {onAnimatePhoto &&
+                        photo.type !== "application/pdf" &&
+                        !photo.type?.startsWith("video/") &&
+                        !photo.path?.toLowerCase().match(/\.(mp4|mov|avi|mkv|webm|pdf)$/) && (
+                          <Tooltip
+                            title={language === "ko" ? "AI 모션 영상 생성" : "Generate AI Motion Video"}
+                            content={
+                              language === "ko"
+                                ? "Gemini Omni 모델을 통해 5초 카메라 모션 영상을 생성합니다."
+                                : "Generate 5-second cinematic motion video with Gemini Omni."
+                            }
+                          >
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onAnimatePhoto(photo);
+                              }}
+                              className="p-1.5 bg-violet-600/20 hover:bg-violet-600/40 text-violet-300 hover:text-white rounded-lg transition-colors cursor-pointer border border-violet-500/30"
+                            >
+                              <Video size={13} />
+                            </button>
+                          </Tooltip>
+                        )}
+
                       {onInspect && (
                         <Tooltip
                           title={language === "ko" ? "정밀 사진 분석" : "Inspect Forensic View"}

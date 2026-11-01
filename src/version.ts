@@ -19,18 +19,38 @@ export interface AppVersionInfo {
 }
 
 export const APP_VERSION_INFO: AppVersionInfo = {
-  version: "2.4.0",
+  version: "2.5.0",
   appName: "SnapClean AI",
-  buildNumber: "20261017.0645",
-  buildDate: "2026-10-17",
+  buildNumber: "20261101.0100",
+  buildDate: "2026-11-01",
   channel: "stable",
-  engineVersion: "Dexie+FastView-v2.4.4+DOMVirtualizer+MobileGPU",
+  engineVersion: "Dexie+FastView-v2.5.0+SmartDuplicateAI+GitHubReleasesAutoUpdate",
   patchNotes: [
+    {
+      version: "2.5.0",
+      releaseDate: "2026-11-01",
+      theme: "GitHub Releases 실시간 자동 업데이트 & 스마트 AI 사진 자동 선별 시스템 완공",
+      isLatest: true,
+      features: [
+        "개발자 AhBiYout (AhBiYout-all) GitHub Releases 기반 실시간 자동 업데이트 체크 및 팝업 모달 탑재",
+        "초점(Blur) · 노출(Exposure) · 구도(Composition) 3축 AI 종합 평가 기반 '스마트 AI 중복 사진 자동 선택' 엔진 구현",
+        "Unpacked Multi-File 개별파일 설치형 패키징 및 조용한 Windows 방화벽 규칙 사전 등록 지원",
+        "GitHub Actions CI/CD 파이프라인 Node.js 22 LTS 표준 환경 최적화 전환 (Node 20 EOL 대처)",
+        "개인정보 및 이메일 보안 가이드라인 준수 및 .gitignore 대대적 개편",
+      ],
+      improvements: [
+        "단순 높은 해상도 대신 실제 초점 선명도와 조명 밸런스가 뛰어난 베스트 컷 자동 지정",
+        "무인 설치(/S) 모드 및 기존 설치 버전 자동 감지 및 덮어쓰기 안내 기능 구현",
+      ],
+      fixes: [
+        "GitHub CI/CD 빌드 시 발생하던 Node 20 EOL 경고 제거 및 릴리스 아티팩트 정리",
+      ],
+    },
     {
       version: "2.4.4",
       releaseDate: "2026-10-13",
       theme: "모바일 화면 렌더링 & DOM 가상화 (Virtual Windowing & GPU Fill-Rate) 3번 아키텍처 완공",
-      isLatest: true,
+      isLatest: false,
       features: [
         "대규모 사진 라이브러리 및 중복 그룹 대상 DOM 가상화(Virtual Windowing) 전면 도입 (useVirtualWindow & VirtualGrid)",
         "뷰포트 내 가시 카드(15~25개)만 실제 DOM에 마운트하고 스크롤 위치에 맞춰 재활용 (DOM 노드 96% 이상 감축)",
