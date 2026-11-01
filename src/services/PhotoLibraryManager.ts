@@ -2,6 +2,7 @@ import { PhotoRecord } from './db';
 import { Photo, DuplicateGroup } from '../types';
 import { SystemAPI } from './systemApi';
 import { DedupeEngine } from './dedupeEngine';
+import { FilenameInferenceEngine } from './filenameInferenceEngine';
 
 export type DedupeRule = 'ai_smart' | 'sharpest' | 'largest' | 'newest' | 'oldest' | 'highest_res' | 'rich_exif' | 'priority_folder';
 
@@ -11,6 +12,7 @@ export interface DedupeOptions {
   matchTemporalBurst: boolean;     // Sequential shots taken within burst window
   matchResizedCopies: boolean;     // Resized/converted copies (differing resolution/format)
   matchFilenamePatterns: boolean;  // Name copy suffixes like " (1)", "_copy", "- 복사본"
+  matchFilenameInference: boolean; // Deductive inference from name: SNS/messenger exports, capture timestamps, editor tags
   matchCrossFolder: boolean;       // Enable cross-folder detection
 
   visualThreshold: number;         // 2 (ultra strict: 97%), 4 (strict: 94%), 6 (balanced: 90%), 10 (loose: 84%)
@@ -27,6 +29,7 @@ export const DEFAULT_DEDUPE_OPTIONS: DedupeOptions = {
   matchTemporalBurst: true,
   matchResizedCopies: true,
   matchFilenamePatterns: true,
+  matchFilenameInference: true,
   matchCrossFolder: true,
   visualThreshold: 6,
   burstWindowMs: 30000,
@@ -208,7 +211,7 @@ export class PhotoLibraryManager {
       id: string,
       type: 'exact' | 'similar',
       members: PhotoRecord[],
-      subType: 'exact_byte' | 'visual_similar' | 'burst' | 'resized' | 'cross_folder' | 'filename_copy',
+      subType: 'exact_byte' | 'visual_similar' | 'burst' | 'resized' | 'cross_folder' | 'filename_copy' | 'filename_inferred',
       confidence: number,
       reasons: string[],
       matchDetails?: any
@@ -276,9 +279,35 @@ export class PhotoLibraryManager {
     }
 
     // =========================================================
-    // STAGE 2: Filename Copy Pattern Match (e.g. IMG (1).jpg)
+    // STAGE 2: Filename Deductive Inference & Copy Match
+    // (e.g. KakaoTalk_20240501_..., IMG (1).jpg, - 복사본, _edit)
     // =========================================================
-    if (opts.matchFilenamePatterns) {
+    if (opts.matchFilenameInference || opts.matchFilenamePatterns) {
+      // 1. Deep Deductive Filename Inference Engine
+      const inferredGroups = FilenameInferenceEngine.findInferredGroups(
+        validMedia,
+        processedIds,
+        opts.folderScope === 'cross_folder'
+      );
+
+      inferredGroups.forEach(infGroup => {
+        if (infGroup.photos.length > 1 && matchesFolderScope(infGroup.photos)) {
+          infGroup.photos.forEach(p => processedIds.add(p.id || p.originalId));
+          const primaryPattern = infGroup.matchDetails?.inferredPatternType;
+          const subType = primaryPattern === 'os_copy' ? 'filename_copy' : 'filename_inferred';
+          finalizeGroup(
+            infGroup.id,
+            'similar',
+            infGroup.photos,
+            subType,
+            infGroup.confidence || 0.96,
+            [subType, 'filename_inferred', 'similar'],
+            infGroup.matchDetails
+          );
+        }
+      });
+
+      // 2. Fallback base name matching for any remaining unprocessed items
       const nameMap = new Map<string, PhotoRecord[]>();
       validMedia.forEach(photo => {
         const pId = photo.id || photo.originalId;
@@ -294,12 +323,12 @@ export class PhotoLibraryManager {
 
       nameMap.forEach((matched, baseName) => {
         if (matched.length > 1) {
-          // Verify if they are indeed duplicates: either size ratio >= 0.90 or pHash distance <= 8
+          // Verify if they are indeed duplicates: either size ratio >= 0.85 or pHash distance <= 8
           const verifiedMembers: PhotoRecord[] = [matched[0]];
           for (let k = 1; k < matched.length; k++) {
             const candidate = matched[k];
             const sizeRatio = Math.min(matched[0].size, candidate.size) / Math.max(matched[0].size, candidate.size);
-            let verified = sizeRatio >= 0.90;
+            let verified = sizeRatio >= 0.85;
             if (!verified && matched[0].pHash && candidate.pHash) {
               const dist = calculateHamming(matched[0].pHash, candidate.pHash);
               if (dist <= 8) verified = true;
@@ -315,8 +344,8 @@ export class PhotoLibraryManager {
               verifiedMembers,
               'filename_copy',
               0.98,
-              ['filename_copy_pattern', 'similar'],
-              { namePatternMatch: true }
+              ['filename_copy_pattern', 'similar', 'filename_inferred'],
+              { namePatternMatch: true, inferredByFilename: true, inferredRationale: '파일명 정규화 베이스 일치' }
             );
           }
         }

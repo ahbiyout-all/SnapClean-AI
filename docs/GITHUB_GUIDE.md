@@ -41,8 +41,9 @@ push_to_github.bat
 GitHub Actions 환경에서의 Node.js 20 EOL (2026년 4월 수명 종료) 노란색 경고 방지를 위해 최신 **Node.js 22 LTS** 파이프라인이 전면 적용되어 있습니다.
 
 - **릴리스 자동 패키징 (`.github/workflows/github-release.yml`)**:
-  - `v*` 태그 푸시 또는 수동 트리거 시 실행
+  - `v*` 태그 푸시 또는 수동 트리거 시 실행 (최신 버전: `v2.6.0`)
   - Node.js 22 LTS 환경에서 TypeScript 검사, Vite 번들링 및 Unpacked Setup 설치 패키지 생성
+  - 파일명 지능형 유추 엔진(`FilenameInferenceEngine`), 스마트 AI 화질 선택기, D3 히트맵 등 신규 기능 포함
   - GitHub Releases 항목에 패치노트와 함께 자동 첨부
 - **GitHub Pages 자동 배포 (`.github/workflows/deploy-pages.yml`)**:
   - `main` 브랜치 푸시 시 최신 라이브 웹 PWA 자동 배포

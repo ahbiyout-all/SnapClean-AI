@@ -13,7 +13,7 @@ export interface DedupeGroup {
   confidence?: number;
   reasons?: string[];
   representativeDate?: number;
-  subType?: 'exact_byte' | 'visual_similar' | 'burst' | 'resized' | 'cross_folder' | 'filename_copy';
+  subType?: 'exact_byte' | 'visual_similar' | 'burst' | 'resized' | 'cross_folder' | 'filename_copy' | 'filename_inferred';
   similarityPercent?: number;
   timeDiffSeconds?: number;
   matchDetails?: {
@@ -23,6 +23,9 @@ export interface DedupeGroup {
     resolutionDifferent?: boolean;
     crossFolder?: boolean;
     namePatternMatch?: boolean;
+    inferredByFilename?: boolean;
+    inferredPatternType?: string;
+    inferredRationale?: string;
   };
 }
 

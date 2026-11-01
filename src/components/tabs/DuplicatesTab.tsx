@@ -159,7 +159,7 @@ export const DuplicatesTab = ({
   const [showOptionsPanel, setShowOptionsPanel] = useState(false);
   const [isRescanning, setIsRescanning] = useState(false);
   const [subTypeFilter, setSubTypeFilter] = useState<
-    "all" | "exact" | "visual" | "burst" | "resized" | "filename_copy" | "cross_folder"
+    "all" | "exact" | "visual" | "burst" | "resized" | "filename_copy" | "filename_inferred" | "cross_folder"
   >("all");
   const [inspectingGroup, setInspectingGroup] = useState<DedupeGroup | null>(null);
   const [inspectingGroupIndex, setInspectingGroupIndex] = useState<number>(0);
@@ -200,10 +200,25 @@ export const DuplicatesTab = ({
       | "exact_only"
       | "burst_only"
       | "resized_only"
+      | "name_inferred"
       | "loose_creative",
   ) => {
     let next: Partial<DedupeOptions> = {};
-    if (preset === "balanced") {
+    if (preset === "name_inferred") {
+      next = {
+        matchExactBytes: false,
+        matchVisualSimilarity: true,
+        matchTemporalBurst: false,
+        matchResizedCopies: true,
+        matchFilenamePatterns: true,
+        matchFilenameInference: true,
+        matchCrossFolder: true,
+        visualThreshold: 8,
+        burstWindowMs: -1,
+        folderScope: "all",
+      };
+      setSubTypeFilter("filename_inferred");
+    } else if (preset === "balanced") {
       next = {
         matchExactBytes: true,
         matchVisualSimilarity: true,
@@ -299,6 +314,7 @@ export const DuplicatesTab = ({
     let burst = 0;
     let resized = 0;
     let filenameCopy = 0;
+    let filenameInferred = 0;
     let crossFolder = 0;
 
     sortedGroups.forEach((g) => {
@@ -318,6 +334,12 @@ export const DuplicatesTab = ({
         g.reasons?.includes("filename_copy_pattern")
       )
         filenameCopy++;
+      if (
+        g.subType === "filename_inferred" ||
+        g.reasons?.includes("filename_inferred") ||
+        g.matchDetails?.inferredByFilename
+      )
+        filenameInferred++;
       if (g.reasons?.includes("cross_folder")) crossFolder++;
     });
 
@@ -328,6 +350,7 @@ export const DuplicatesTab = ({
       burst,
       resized,
       filenameCopy,
+      filenameInferred,
       crossFolder,
     };
   }, [sortedGroups]);
@@ -379,6 +402,12 @@ export const DuplicatesTab = ({
         return (
           g.subType === "filename_copy" ||
           g.reasons?.includes("filename_copy_pattern")
+        );
+      if (subTypeFilter === "filename_inferred")
+        return (
+          g.subType === "filename_inferred" ||
+          g.reasons?.includes("filename_inferred") ||
+          g.matchDetails?.inferredByFilename
         );
       if (subTypeFilter === "cross_folder")
         return g.reasons?.includes("cross_folder");
@@ -719,6 +748,12 @@ export const DuplicatesTab = ({
             📐 {language === "ko" ? "리사이즈/변환본" : "Resized & Converted"}
           </button>
           <button
+            onClick={() => applyPreset("name_inferred")}
+            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition-all flex items-center gap-1 cursor-pointer shadow-sm"
+          >
+            🔤 {language === "ko" ? "이름 유추 집중" : "Name Inference"}
+          </button>
+          <button
             onClick={() => applyPreset("loose_creative")}
             className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/20 transition-all flex items-center gap-1 cursor-pointer"
           >
@@ -841,6 +876,28 @@ export const DuplicatesTab = ({
                     <InfoTooltip
                       title={language === "ko" ? "파일명 복사본" : "Filename Suffix"}
                       content={language === "ko" ? "'- 복사본', ' (1)', '_copy' 등 접미사 검출" : "Detect copy suffixes like (1), - Copy"}
+                      size={12}
+                    />
+                  </label>
+                </Tooltip>
+
+                <Tooltip
+                  title={language === "ko" ? "파일명 지능형 유추" : "Filename Deductive Inference"}
+                  content={language === "ko" ? "메신저(카카오톡/WhatsApp), 촬영일시 시그니처, 편집접미사(_edit) 등으로 원본-복사본을 지능적으로 유추합니다." : "Infer duplicates from messenger prefixes, timestamps, and edit tags."}
+                >
+                  <label className="flex items-center justify-between p-2.5 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 cursor-pointer transition-all">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={activeDedupeOptions.matchFilenameInference ?? true}
+                        onChange={(e) => updateDedupeOptions({ matchFilenameInference: e.target.checked })}
+                        className="w-4 h-4 rounded text-indigo-600 focus:ring-0 bg-slate-800 border-slate-600 cursor-pointer"
+                      />
+                      <span className="font-bold text-slate-200">🔤 {language === "ko" ? "이름 지능형 유추" : "Name Inference"}</span>
+                    </div>
+                    <InfoTooltip
+                      title={language === "ko" ? "이름 지능형 유추" : "Name Inference"}
+                      content={language === "ko" ? "카카오톡/촬영일시/편집접미사 패턴 유추" : "Deduce duplicates via messenger, timestamp & edit tags"}
                       size={12}
                     />
                   </label>
@@ -1109,6 +1166,26 @@ export const DuplicatesTab = ({
         </Tooltip>
 
         <Tooltip
+          title={language === "ko" ? "파일명 지능형 유추" : "Filename Deductive Inference"}
+          content={
+            language === "ko"
+              ? "메신저(카카오톡/WhatsApp), 촬영일시 토큰, 사진 편집기 접미사(_edit) 등으로 유추된 중복입니다."
+              : "Duplicates deduced via messenger transfers, timestamp signatures, or editor suffixes."
+          }
+        >
+          <button
+            onClick={() => setSubTypeFilter("filename_inferred")}
+            className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
+              subTypeFilter === "filename_inferred"
+                ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            🔤 {language === "ko" ? "이름으로 유추" : "Inferred by Name"} ({counts.filenameInferred})
+          </button>
+        </Tooltip>
+
+        <Tooltip
           title={language === "ko" ? "폴더 간 중복 대조" : "Cross-Folder Match"}
           content={
             language === "ko"
@@ -1265,6 +1342,52 @@ export const DuplicatesTab = ({
                 <span className="truncate">
                   {language === "ko" ? "스마트 AI 자동 선택" : "Smart AI Selection"}
                 </span>
+              </button>
+            </Tooltip>
+
+            <Tooltip
+              title={language === "ko" ? "이름으로 중복 유추 실행" : "Infer Duplicates by Filename"}
+              content={
+                language === "ko"
+                  ? "카카오톡/WhatsApp 메신저 전송본, 촬영일시 시그니처, 편집접미사(_edit) 등으로 원본과 중복 복사본을 유추합니다."
+                  : "Deduce duplicate and derivative copies via messenger prefixes, timestamp signatures, and edit tags."
+              }
+            >
+              <button
+                onClick={() => {
+                  setSubTypeFilter("filename_inferred");
+                  if (counts.filenameInferred === 0 && onRescanDuplicates) {
+                    setIsRescanning(true);
+                    onRescanDuplicates({ matchFilenameInference: true, matchFilenamePatterns: true })
+                      .finally(() => setIsRescanning(false));
+                    addNotification(
+                      language === "ko" ? "🔤 이름 유추 중복 재탐지 실행" : "🔤 Filename Inference Rescan",
+                      language === "ko"
+                        ? "파일명 지능형 유추 엔진으로 라이브러리를 재탐지합니다."
+                        : "Rescanning library with Filename Deductive Inference enabled.",
+                      "info"
+                    );
+                  } else {
+                    addNotification(
+                      language === "ko" ? "🔤 이름 유추 중복 필터링" : "🔤 Inferred Duplicates Filtered",
+                      language === "ko"
+                        ? `총 ${counts.filenameInferred}개의 파일명 기반 유추 중복 그룹이 감지되었습니다.`
+                        : `Found ${counts.filenameInferred} duplicate groups inferred from filenames.`,
+                      "info"
+                    );
+                  }
+                }}
+                className="px-3.5 py-2 bg-gradient-to-r from-cyan-600/20 to-blue-600/20 hover:from-cyan-600/30 hover:to-blue-600/30 border border-cyan-500/40 rounded-xl text-xs font-black text-cyan-300 transition-all cursor-pointer flex items-center gap-1.5 justify-center w-full sm:w-auto shadow-md"
+              >
+                <Copy size={14} className="text-cyan-400" />
+                <span className="truncate">
+                  {language === "ko" ? "이름으로 중복 유추" : "Infer by Name"}
+                </span>
+                {counts.filenameInferred > 0 && (
+                  <span className="bg-cyan-500/30 text-cyan-200 text-[10px] px-1.5 py-0.2 rounded-full font-black">
+                    {counts.filenameInferred}
+                  </span>
+                )}
               </button>
             </Tooltip>
             <button

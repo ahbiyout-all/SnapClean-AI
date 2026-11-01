@@ -32,7 +32,7 @@ export const OFFICIAL_SPECS = {
   repoName: 'SnapCleanAI',
   githubRepoUrl: 'https://github.com/AhBiYout-all/SnapCleanAI',
   blogUrl: 'https://ahbiyoutvibe.blogspot.com/',
-  currentVersion: metadata.version || '2.5.0',
+  currentVersion: metadata.version || '2.6.0',
 };
 
 function parseSemver(versionStr: string): number[] {

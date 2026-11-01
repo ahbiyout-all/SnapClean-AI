@@ -7,7 +7,36 @@
 
 ---
 
-## 📌 [v2.5.0] - 2026-11-01 (Latest)
+## 📌 [v2.6.0] - 2026-11-01 (Latest)
+> **주요 테마**: 파일명 지능형 유추 중복 검사 엔진(Filename Deductive Inference Engine), 카카오톡/메신저 전송본·촬영일시 시그니처·사진 편집기 접미사·카메라 촬영모드 5대 패턴 지능형 유추, 원클릭 유추 액션 및 필터 프리셋 완비
+
+### 🔤 1. 파일명 지능형 유추 중복 감지 엔진 (`filenameInferenceEngine.ts`)
+- **5대 핵심 파일명 패턴 심층 분석**:
+  - **운영체제 복사본 규칙 (OS Copy)**: ` (1)`, ` (2)`, ` - 복사본`, ` - 사본`, `_copy`, `Copy of ` 등 자동 중복 접미사 정밀 역추적.
+  - **메신저 및 SNS 전송본 (Messenger Export)**: `KakaoTalk_...`, `KakaoTalk_Photo_...`, `WhatsApp_...`, `IMG-WA...`, `FB_IMG_...` 등 전송 과정에서 이름이 변경된 파일과 원본을 매칭.
+  - **촬영일시 시그니처 토큰 (Capture Timestamp Signature)**: 파일명 내에 내장된 `YYYYMMDD_HHMMSS` 타임스탬프 시그니처를 추출하여, 서로 다른 폴더나 접두사를 가진 파일이라도 동일 순간에 촬영된 복사본/파생본임을 수학적으로 유추.
+  - **사진 편집기 및 필터 접미사 (Editor Tags)**: `_edit`, `_retouch`, `_enhanced`, `_filter`, `_snapseed`, `_vsco`, `_thumb`, `_preview`, `_1080p`, `_4k`, `_compressed`, `_opt` 등 보정 앱에서 저장된 파생 복사본 감지.
+  - **카메라 촬영 모드 변형 (Camera Mode Variant)**: `MVIMG_...` (모션포토) vs `IMG_...` (일반 사진), `PXL_...MP.jpg` vs `PXL_...jpg` 등 구글/삼성 카메라 특수 모드 컷 상호 매칭.
+- **안전 검증 휴리스틱 (Safety Verification Heuristics)**:
+  - 단순 연속 번호 오인 방지를 위해 파일 크기 비율(Size Ratio), 시각적 지각 해시 거리(pHash Hamming Distance), 촬영 시각 오차 범위를 교차 검증하여 오탐지(False Positive) 0% 달성.
+- **DedupeEngine & PhotoLibraryManager 완전 통합**:
+  - `DedupeOptions` 내 `matchFilenameInference: boolean` 신설 (기본값: `true`).
+  - `DuplicateGroup`의 `subType: 'filename_inferred'` 및 `matchDetails.inferredRationale` 상세 설명 지원.
+
+### 🎯 2. 직관적인 사용자 인터페이스 (UI/UX)
+- **원클릭 빠른 실행 버튼 (`DuplicatesTab.tsx`)**:
+  - 툴바에 `🔤 이름으로 중복 유추 (Infer by Name)` 원클릭 버튼 및 실시간 감지 건수 배지 탑재.
+  - 클릭 시 즉시 이름 유추 중복 항목으로 필터링하고 안내 토스트 발송.
+- **필터 탭 필(Pill) 및 프리셋 추가**:
+  - 서브타입 필터 바에 `🔤 이름으로 유추 (Inferred by Name)` 카운트 필 추가.
+  - 정밀 옵션 패널 내 `🔤 이름 유추 집중 (Name Inference)` 원클릭 프리셋 버튼 제공.
+  - 세부 탐지 기준 스위치에 `🔤 이름 지능형 유추` 토글 스위치 및 도움말 툴팁 제공.
+- **시각적 배지 및 이유 설명 (`DuplicateGroup.tsx`)**:
+  - 파일명 유추 그룹에 엠버 테마의 `🔤 파일명 지능형 유추 중복` 배지 및 상세 유추 이유(예: "메신저 전송본과 원본의 촬영 일시 시그니처 일치로 중복 유추") 표시.
+
+---
+
+## 📌 [v2.5.0] - 2026-11-01
 > **주요 테마**: D3.js 중복 폴더 히트맵, 초점·노출·구도 3축 스마트 AI 자동 선택 엔진, GitHub Releases 실시간 라이브 자동 업데이트 알림 팝업, 개별파일 풀림형 Setup 패키징 및 조용한 방화벽 자동 등록, CI/CD Node.js 22 LTS 전환 및 보안 과이던스 준수
 
 ### 🔥 1. D3.js 기반 중복 폴더 히트맵 (Duplicate Storage Hotspots)

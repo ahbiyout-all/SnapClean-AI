@@ -904,6 +904,13 @@ export const DuplicateGroup = ({
         color: "bg-purple-500/10 text-purple-400 border border-purple-500/20",
         sub: language === "ko" ? "동일한 장면이지만 해상도나 파일 포맷이 다름" : "Identical scene with different resolution/format",
       };
+    if (group.subType === "filename_inferred" || reasons.includes("filename_inferred") || group.matchDetails?.inferredByFilename)
+      return {
+        label: language === "ko" ? "파일명 지능형 유추 중복" : "Filename Deductive Duplicate",
+        icon: <Sparkles size={24} className="text-amber-400" />,
+        color: "bg-amber-500/15 text-amber-300 border border-amber-500/30",
+        sub: group.matchDetails?.inferredRationale || (language === "ko" ? "메신저/촬영일시/편집접미사 패턴으로 원본-복사본 관계 유추" : "Inferred duplicate via SNS/timestamp/edit pattern"),
+      };
     if (group.subType === "filename_copy" || reasons.includes("filename_copy_pattern"))
       return {
         label: language === "ko" ? "파일명 복사 패턴 (1)" : "Filename Copy Pattern",
