@@ -912,3 +912,265 @@ export async function applyAiNarrativeToPhotobook(
   await savePhotobook(updatedBook);
   return { updatedBook, summary };
 }
+
+/**
+ * Extracts a complete list of PhotoRecords from a PhotobookRecord,
+ * cross-referencing with the database for rich metadata if available.
+ */
+export async function extractPhotosFromPhotobook(book: PhotobookRecord): Promise<PhotoRecord[]> {
+  const seenPaths = new Set<string>();
+  const extracted: PhotoRecord[] = [];
+
+  let dbPhotos: PhotoRecord[] = [];
+  try {
+    dbPhotos = await db.photos.toArray();
+  } catch (err) {
+    console.warn('[extractPhotosFromPhotobook] Could not read db.photos:', err);
+  }
+
+  const dbByPath = new Map<string, PhotoRecord>();
+  const dbById = new Map<number, PhotoRecord>();
+  for (const p of dbPhotos) {
+    if (p.path) dbByPath.set(p.path, p);
+    if (p.id) dbById.set(p.id, p);
+  }
+
+  for (const page of book.pages) {
+    for (const ph of page.photos) {
+      if (!ph.path || seenPaths.has(ph.path)) continue;
+      seenPaths.add(ph.path);
+
+      // Match in db
+      const matched = (ph.photoId && dbById.get(ph.photoId)) || dbByPath.get(ph.path);
+      if (matched) {
+        extracted.push(matched);
+      } else {
+        const parsedTime = ph.date ? Date.parse(ph.date) : 0;
+        const fallbackTime = !isNaN(parsedTime) && parsedTime > 0 ? parsedTime : Date.now();
+        extracted.push({
+          id: ph.photoId || Math.floor(Math.random() * 10000000),
+          originalId: `ph_${ph.photoId || Math.floor(Math.random() * 10000000)}`,
+          path: ph.path,
+          size: 1024 * 1024,
+          lastModified: fallbackTime,
+          dateTaken: fallbackTime,
+          status: 'analyzed',
+          category: (ph as any).category || 'Memories',
+          aestheticScore: ph.aestheticScore || 8.0,
+          blurScore: ph.blurScore || 90,
+          description: ph.caption,
+          locationName: ph.location,
+          tags: (ph as any).tags || [],
+        } as PhotoRecord);
+      }
+    }
+  }
+
+  return extracted;
+}
+
+export interface MergeEventsOptions {
+  customTitle?: string;
+  storyTone?: StoryTone;
+  theme?: PhotobookTheme;
+  bgmType?: 'gentle-piano' | 'warm-vinyl' | 'summer-breeze' | 'none';
+  customSummary?: EventSummary;
+  enableAiSummary?: boolean;
+}
+
+/**
+ * Manually merges two generated events into one consolidated event photobook.
+ * Combines photos chronologically, reconciles date ranges, synthesizes an event summary
+ * using generateEventSummary, creates the new unified photobook, and cleans up the source events.
+ */
+export async function mergeEvents(
+  eventA: PhotobookRecord,
+  eventB: PhotobookRecord,
+  options: MergeEventsOptions = {}
+): Promise<{ mergedBook: PhotobookRecord; summary: EventSummary }> {
+  if (eventA.id === eventB.id) {
+    throw new Error('Cannot merge an event with itself');
+  }
+
+  // 1. Extract photos from both events
+  const [photosA, photosB] = await Promise.all([
+    extractPhotosFromPhotobook(eventA),
+    extractPhotosFromPhotobook(eventB),
+  ]);
+
+  // Combine and deduplicate photos by path or id
+  const pathSet = new Set<string>();
+  const mergedPhotos: PhotoRecord[] = [];
+  for (const p of [...photosA, ...photosB]) {
+    const key = p.path || String(p.id);
+    if (!pathSet.has(key)) {
+      pathSet.add(key);
+      mergedPhotos.push(p);
+    }
+  }
+
+  // Sort photos chronologically
+  mergedPhotos.sort((a, b) => (a.dateTaken || a.lastModified || 0) - (b.dateTaken || b.lastModified || 0));
+
+  // Determine active tone, theme, and bgm
+  const activeTone: StoryTone = options.storyTone || eventA.storyTone || eventB.storyTone || 'lyrical';
+  const activeTheme: PhotobookTheme = options.theme || eventA.theme || eventB.theme || 'classic-hardcover';
+  const activeBgm = options.bgmType || eventA.bgmType || eventB.bgmType || 'gentle-piano';
+
+  // 2. Synthesize tags from both events for the AI event summary
+  const mergedTags: string[] = [
+    eventA.title,
+    eventB.title,
+    eventA.locationSummary || '',
+    eventB.locationSummary || '',
+    ...(eventA.chapters?.map(c => c.title) || []),
+    ...(eventB.chapters?.map(c => c.title) || []),
+    ...(eventA.chapters?.map(c => c.locationName).filter(Boolean) as string[] || []),
+    ...(eventB.chapters?.map(c => c.locationName).filter(Boolean) as string[] || []),
+    ...mergedPhotos.flatMap(p => p.tags || []),
+    ...mergedPhotos.map(p => p.locationName).filter(Boolean) as string[],
+    ...mergedPhotos.map(p => p.category).filter(Boolean) as string[],
+  ].filter(t => typeof t === 'string' && t.trim().length > 0);
+
+  const uniqueTags = Array.from(new Set(mergedTags)).slice(0, 18);
+
+  // 3. Generate or use provided event summary
+  let summary: EventSummary;
+  if (options.customSummary) {
+    summary = options.customSummary;
+  } else if (options.enableAiSummary !== false) {
+    summary = await generateEventSummary(
+      uniqueTags.length > 0 ? uniqueTags : [eventA.title, eventB.title, 'Merged Memories'],
+      activeTone
+    );
+  } else {
+    summary = {
+      title: options.customTitle || `${eventA.title} & ${eventB.title}`,
+      story: `${eventA.title}와(과) ${eventB.title}의 소중한 순간들이 하나로 어우러진 특별한 이야기입니다.`,
+      mood: 'Sentimental'
+    };
+  }
+
+  const mergedTitle = options.customTitle?.trim() || summary.title || `${eventA.title} & ${eventB.title}`;
+
+  // 4. Create base merged photobook
+  let mergedBook = createPhotobookFromPhotos(mergedPhotos, {
+    title: mergedTitle,
+    theme: activeTheme,
+    storyTone: activeTone,
+    bgmType: activeBgm,
+  });
+
+  // Calculate merged location summary
+  const uniqueLocations = Array.from(
+    new Set([eventA.locationSummary, eventB.locationSummary, ...mergedPhotos.map(p => p.locationName)].filter(Boolean) as string[])
+  );
+  if (uniqueLocations.length > 0) {
+    mergedBook.locationSummary = uniqueLocations.slice(0, 3).join(', ');
+  }
+
+  // 5. Populate pages with synthesized AI narrative
+  mergedBook = populateBookWithAiNarrative(mergedBook, summary);
+
+  // 6. Persist to storage and clean up source events
+  await savePhotobook(mergedBook);
+  await Promise.all([
+    deletePhotobook(eventA.id),
+    deletePhotobook(eventB.id),
+  ]);
+
+  return { mergedBook, summary };
+}
+
+export const mergeEventPhotobooks = mergeEvents;
+
+export interface MergeHistoryRecord {
+  id: string;
+  timestamp: number;
+  mergedBookId: string;
+  mergedBookTitle: string;
+  originalEvents: [PhotobookRecord, PhotobookRecord];
+  photoCount: number;
+  summaryTitle?: string;
+  storyTone?: StoryTone;
+  isReverted?: boolean;
+  revertedAt?: number;
+}
+
+const MERGE_HISTORY_STORAGE_KEY = 'snapclean_photobook_merge_history';
+
+export function getMergeHistory(): MergeHistoryRecord[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(MERGE_HISTORY_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (err) {
+    console.warn('[MergeHistory] Failed to read merge history from localStorage:', err);
+    return [];
+  }
+}
+
+export function saveMergeHistory(history: MergeHistoryRecord[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const trimmed = history.slice(0, 25);
+    localStorage.setItem(MERGE_HISTORY_STORAGE_KEY, JSON.stringify(trimmed));
+  } catch (err) {
+    console.warn('[MergeHistory] Failed to save merge history to localStorage:', err);
+  }
+}
+
+export function recordMergeHistory(record: MergeHistoryRecord): void {
+  const current = getMergeHistory();
+  const updated = [record, ...current.filter(r => r.id !== record.id)];
+  saveMergeHistory(updated);
+}
+
+export function markMergeHistoryReverted(historyId: string): void {
+  const current = getMergeHistory();
+  const updated = current.map(r => {
+    if (r.id === historyId) {
+      return { ...r, isReverted: true, revertedAt: Date.now() };
+    }
+    return r;
+  });
+  saveMergeHistory(updated);
+}
+
+export function clearMergeHistory(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(MERGE_HISTORY_STORAGE_KEY);
+}
+
+/**
+ * Reverts a previously merged event photobook back into its original two events.
+ * 1. Re-saves eventA and eventB into IndexedDB
+ * 2. Deletes mergedBook from IndexedDB
+ * 3. Updates history ledger marking the operation as reverted
+ */
+export async function undoMergeEvent(
+  mergedBookId: string,
+  originalEvents: [PhotobookRecord, PhotobookRecord],
+  historyId?: string
+): Promise<{ restoredEvents: [PhotobookRecord, PhotobookRecord] }> {
+  const [eventA, eventB] = originalEvents;
+
+  // Restore the original two events and remove the merged one
+  await Promise.all([
+    savePhotobook(eventA),
+    savePhotobook(eventB),
+    deletePhotobook(mergedBookId),
+  ]);
+
+  if (historyId) {
+    markMergeHistoryReverted(historyId);
+  } else {
+    const current = getMergeHistory();
+    const match = current.find(r => r.mergedBookId === mergedBookId && !r.isReverted);
+    if (match) {
+      markMergeHistoryReverted(match.id);
+    }
+  }
+
+  return { restoredEvents: [eventA, eventB] };
+}

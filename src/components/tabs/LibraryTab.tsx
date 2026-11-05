@@ -26,7 +26,14 @@ import {
   Edit2,
   X,
   Sparkles,
-  BarChart3
+  BarChart3,
+  ChevronDown,
+  Check,
+  Filter,
+  ArrowUpDown,
+  Clock,
+  Type,
+  HardDrive
 } from 'lucide-react';
 import { db, PhotoRecord } from '../../services/db';
 import { useI18n } from '../../i18n/context';
@@ -39,6 +46,8 @@ import { SystemAPI } from '../../services/systemApi';
 import { Tooltip, InfoTooltip } from '../Tooltip';
 import { fastViewEngine } from '../../services/fastViewEngine';
 import { SearchDistributionChart } from '../SearchDistributionChart';
+import { CategorySummaryChart } from '../CategorySummaryChart';
+import { BulkActionHeaderBar } from '../BulkActionHeaderBar';
 import { SmartQuery } from '../../services/geminiService';
 
 const LibMiniThumbnail = ({ thumbnail, photo }: { thumbnail?: Blob; photo?: PhotoRecord }) => {
@@ -201,6 +210,7 @@ export const LibraryTab = ({
   );
   const [showViewMenu, setShowViewMenu] = useState(false);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [showCategorySummary, setShowCategorySummary] = useState(false);
   const activeFiltersCount = useMemo(() => {
     return selectedCategories.length + selectedQualityTags.length + selectedFormats.length + selectedYears.length + selectedLocations.length + selectedSizes.length + selectedOrientations.length + selectedCameras.length;
   }, [selectedCategories, selectedQualityTags, selectedFormats, selectedYears, selectedLocations, selectedSizes, selectedOrientations, selectedCameras]);
@@ -219,6 +229,343 @@ export const LibraryTab = ({
   
   const [showBatchRenameModal, setShowBatchRenameModal] = useState(false);
   const [renamePattern, setRenamePattern] = useState('[Date]-[Location]-[Sequence]');
+
+  // 'Select by Category' state and ref
+  const [showCategorySelectMenu, setShowCategorySelectMenu] = useState(false);
+  const categorySelectMenuRef = useRef<HTMLDivElement>(null);
+
+  // Header Filter Dropdown state and ref
+  const [showHeaderCategoryDropdown, setShowHeaderCategoryDropdown] = useState(false);
+  const headerCategoryDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Header Sort Dropdown state and ref
+  const [showSortDropdown, setShowSortDropdown] = useState(false);
+  const sortDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showCategorySelectMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (categorySelectMenuRef.current && !categorySelectMenuRef.current.contains(e.target as Node)) {
+        setShowCategorySelectMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showCategorySelectMenu]);
+
+  useEffect(() => {
+    if (!showHeaderCategoryDropdown) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (headerCategoryDropdownRef.current && !headerCategoryDropdownRef.current.contains(e.target as Node)) {
+        setShowHeaderCategoryDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showHeaderCategoryDropdown]);
+
+  useEffect(() => {
+    if (!showSortDropdown) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(e.target as Node)) {
+        setShowSortDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showSortDropdown]);
+
+  const getCategoryIcon = (cat: string) => {
+    const lower = cat.toLowerCase();
+    if (lower.includes('nature') || lower.includes('자연') || lower.includes('풍경')) return '🌿';
+    if (lower.includes('people') || lower.includes('인물') || lower.includes('family') || lower.includes('portrait')) return '👥';
+    if (lower.includes('work') || lower.includes('업무') || lower.includes('office') || lower.includes('job')) return '💼';
+    if (lower.includes('abstract') || lower.includes('추상') || lower.includes('art') || lower.includes('pattern')) return '🎨';
+    if (lower.includes('food') || lower.includes('음식') || lower.includes('식당')) return '🍔';
+    if (lower.includes('doc') || lower.includes('문서') || lower.includes('영수증') || lower.includes('receipt')) return '📄';
+    if (lower.includes('arch') || lower.includes('건축') || lower.includes('building') || lower.includes('city')) return '🏛️';
+    if (lower.includes('travel') || lower.includes('여행') || lower.includes('trip')) return '✈️';
+    if (lower.includes('animal') || lower.includes('동물') || lower.includes('pet') || lower.includes('cat') || lower.includes('dog')) return '🐾';
+    if (lower.includes('vehicle') || lower.includes('차량') || lower.includes('car')) return '🚗';
+    if (lower.includes('night') || lower.includes('야경')) return '🌙';
+    return '🏷️';
+  };
+
+  // Preset & detected categories dropdown list for header filter
+  const categoryDropdownOptions = useMemo(() => {
+    const presetNames = ['Nature', 'People', 'Travel', 'Work', 'Abstract', 'Food', 'Architecture', 'Documents'];
+    const countMap = new Map<string, number>();
+
+    libraryPhotos.forEach(p => {
+      const cat = p.category?.trim() || 'Uncategorized';
+      countMap.set(cat, (countMap.get(cat) || 0) + 1);
+
+      const tags = p.tags || p.aiTags || [];
+      tags.forEach(t => {
+        const normTag = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+        if (presetNames.includes(normTag)) {
+          countMap.set(normTag, (countMap.get(normTag) || 0) + 1);
+        }
+      });
+    });
+
+    Object.entries(categoryStats).forEach(([cat, data]) => {
+      if (!countMap.has(cat)) {
+        countMap.set(cat, data.count);
+      }
+    });
+
+    if (naturePhotosCount > 0) {
+      countMap.set('Nature', naturePhotosCount);
+    }
+
+    const allNames = Array.from(new Set([...presetNames, ...Array.from(countMap.keys())]));
+    return allNames.map(name => ({
+      name,
+      count: countMap.get(name) || 0,
+    }));
+  }, [libraryPhotos, categoryStats]);
+
+  // Compute available AI categories with photo counts, IDs, and current selection status
+  const aiCategoryItems = useMemo(() => {
+    const map = new Map<string, { count: number; ids: number[]; size: number }>();
+
+    libraryPhotos.forEach(p => {
+      if (!p.id) return;
+      const cat = p.category?.trim() || 'Uncategorized';
+      const existing = map.get(cat) || { count: 0, ids: [], size: 0 };
+      existing.count++;
+      existing.ids.push(p.id);
+      existing.size += (p.size || 0);
+      map.set(cat, existing);
+    });
+
+    Object.entries(categoryStats).forEach(([cat, data]) => {
+      if (!map.has(cat) && data.count > 0) {
+        map.set(cat, { count: data.count, ids: [], size: data.size });
+      }
+    });
+
+    return Array.from(map.entries())
+      .map(([name, data]) => {
+        const selectedCount = data.ids.filter(id => selectedPhotoIds.includes(id)).length;
+        const isAllSelected = data.ids.length > 0 && selectedCount === data.ids.length;
+        const isPartiallySelected = selectedCount > 0 && selectedCount < data.ids.length;
+        return {
+          name,
+          count: data.count,
+          ids: data.ids,
+          size: data.size,
+          localizedName: getLocalizedCategory(name, t),
+          icon: getCategoryIcon(name),
+          selectedCount,
+          isAllSelected,
+          isPartiallySelected,
+        };
+      })
+      .sort((a, b) => b.count - a.count);
+  }, [libraryPhotos, categoryStats, selectedPhotoIds, t]);
+
+  // Instantly highlight/select photos belonging to a specific AI category
+  const handleSelectByCategory = (
+    categoryName: string,
+    action: 'replace' | 'add' | 'remove' = 'replace'
+  ) => {
+    const targetName = categoryName.toLowerCase().trim();
+    const matchingPhotos = libraryPhotos.filter(p => {
+      if (!p.id) return false;
+      const cat = (p.category || 'Uncategorized').toLowerCase().trim();
+      const tags = p.tags || p.aiTags || [];
+      if (targetName === 'nature' || targetName === 'landscape') {
+        const hasTag = tags.some(t => t.toLowerCase() === 'nature' || t.toLowerCase() === 'landscape');
+        return cat === 'nature' || cat === 'landscape' || hasTag;
+      }
+      return cat === targetName || tags.some(t => t.toLowerCase() === targetName);
+    });
+
+    const matchingIds = matchingPhotos.map(p => p.id!);
+
+    if (matchingIds.length === 0) {
+      addNotification(
+        language === 'ko' ? '사진 없음' : 'No Photos Found',
+        language === 'ko'
+          ? `'${getLocalizedCategory(categoryName, t)}' 카테고리에 해당하는 사진이 없습니다.`
+          : `No photos found in category '${categoryName}'.`,
+        'info'
+      );
+      return;
+    }
+
+    setIsMultiSelectMode(true);
+
+    if (action === 'replace') {
+      setSelectedPhotoIds(matchingIds);
+      addNotification(
+        language === 'ko' ? '카테고리 일괄 선택 완료' : 'Category Selected',
+        language === 'ko'
+          ? `'${getLocalizedCategory(categoryName, t)}' 카테고리의 사진 ${matchingIds.length}장이 일괄 선택(하이라이트)되었습니다.`
+          : `Instantly highlighted ${matchingIds.length} photos in '${categoryName}'.`,
+        'success'
+      );
+    } else if (action === 'add') {
+      setSelectedPhotoIds(prev => Array.from(new Set([...prev, ...matchingIds])));
+      addNotification(
+        language === 'ko' ? '선택에 추가됨' : 'Added to Selection',
+        language === 'ko'
+          ? `'${getLocalizedCategory(categoryName, t)}' 카테고리 사진 ${matchingIds.length}장을 선택에 추가했습니다.`
+          : `Added ${matchingIds.length} '${categoryName}' photos to selection.`,
+        'success'
+      );
+    } else if (action === 'remove') {
+      const matchSet = new Set(matchingIds);
+      setSelectedPhotoIds(prev => prev.filter(id => !matchSet.has(id)));
+      addNotification(
+        language === 'ko' ? '선택 제외됨' : 'Removed from Selection',
+        language === 'ko'
+          ? `'${getLocalizedCategory(categoryName, t)}' 카테고리 사진 ${matchingIds.length}장을 선택에서 해제했습니다.`
+          : `Removed ${matchingIds.length} '${categoryName}' photos from selection.`,
+        'info'
+      );
+    }
+  };
+
+  // Count of nature and landscape themed photos
+  const naturePhotosCount = useMemo(() => {
+    return libraryPhotos.filter(p => {
+      const c = (p.category || '').toLowerCase();
+      const tags = p.tags || p.aiTags || [];
+      const hasTag = tags.some(t => t.toLowerCase() === 'nature' || t.toLowerCase() === 'landscape');
+      return c === 'nature' || c === 'landscape' || hasTag;
+    }).length;
+  }, [libraryPhotos]);
+
+  // Dedicated 'Nature' and 'Landscape' filter button handlers that update selectedCategories to include 'nature' and 'landscape'
+  const isNatureFilterActive = useMemo(() => {
+    return selectedCategories.some(c => c.toLowerCase() === 'nature') && selectedCategories.some(c => c.toLowerCase() === 'landscape');
+  }, [selectedCategories]);
+
+  const handleToggleNatureFilter = () => {
+    setSelectedCategories(prev => {
+      const isCurrentlyActive = prev.some(c => c.toLowerCase() === 'nature') && prev.some(c => c.toLowerCase() === 'landscape');
+      if (isCurrentlyActive) {
+        return prev.filter(c => c.toLowerCase() !== 'nature' && c.toLowerCase() !== 'landscape');
+      } else {
+        const withoutThem = prev.filter(c => c.toLowerCase() !== 'nature' && c.toLowerCase() !== 'landscape');
+        return [...withoutThem, 'nature', 'landscape'];
+      }
+    });
+  };
+
+  const isLandscapeFilterActive = isNatureFilterActive;
+  const handleToggleLandscapeFilter = handleToggleNatureFilter;
+
+  // Count of people and portrait themed photos
+  const peoplePhotosCount = useMemo(() => {
+    return libraryPhotos.filter(p => {
+      const c = (p.category || '').toLowerCase();
+      const tags = p.tags || p.aiTags || [];
+      const hasTag = tags.some(t => t.toLowerCase() === 'people' || t.toLowerCase() === 'portrait' || t.toLowerCase() === 'person' || t.toLowerCase() === 'human' || t.toLowerCase() === 'family');
+      return c === 'people' || c === 'portrait' || (p.detectedFaces !== undefined && p.detectedFaces > 0) || hasTag;
+    }).length;
+  }, [libraryPhotos]);
+
+  // Dedicated 'People' filter button handler that updates selectedCategories to include 'people' and 'portrait'
+  const isPeopleFilterActive = useMemo(() => {
+    return selectedCategories.some(c => c.toLowerCase() === 'people') && selectedCategories.some(c => c.toLowerCase() === 'portrait');
+  }, [selectedCategories]);
+
+  const handleTogglePeopleFilter = () => {
+    setSelectedCategories(prev => {
+      const isCurrentlyActive = prev.some(c => c.toLowerCase() === 'people') && prev.some(c => c.toLowerCase() === 'portrait');
+      if (isCurrentlyActive) {
+        return prev.filter(c => c.toLowerCase() !== 'people' && c.toLowerCase() !== 'portrait');
+      } else {
+        const withoutThem = prev.filter(c => c.toLowerCase() !== 'people' && c.toLowerCase() !== 'portrait');
+        return [...withoutThem, 'people', 'portrait'];
+      }
+    });
+  };
+
+  // Count of travel and urban themed photos
+  const travelPhotosCount = useMemo(() => {
+    return libraryPhotos.filter(p => {
+      const c = (p.category || '').toLowerCase();
+      const tags = p.tags || p.aiTags || [];
+      const hasTag = tags.some(t => t.toLowerCase() === 'travel' || t.toLowerCase() === 'urban' || t.toLowerCase() === 'trip' || t.toLowerCase() === 'vacation' || t.toLowerCase() === 'city');
+      return c === 'travel' || c === 'urban' || hasTag;
+    }).length;
+  }, [libraryPhotos]);
+
+  // Dedicated 'Travel' filter button handler that updates selectedCategories to include 'travel' and 'urban'
+  const isTravelFilterActive = useMemo(() => {
+    return selectedCategories.some(c => c.toLowerCase() === 'travel') && selectedCategories.some(c => c.toLowerCase() === 'urban');
+  }, [selectedCategories]);
+
+  const handleToggleTravelFilter = () => {
+    setSelectedCategories(prev => {
+      const isCurrentlyActive = prev.some(c => c.toLowerCase() === 'travel') && prev.some(c => c.toLowerCase() === 'urban');
+      if (isCurrentlyActive) {
+        return prev.filter(c => c.toLowerCase() !== 'travel' && c.toLowerCase() !== 'urban');
+      } else {
+        const withoutThem = prev.filter(c => c.toLowerCase() !== 'travel' && c.toLowerCase() !== 'urban');
+        return [...withoutThem, 'travel', 'urban'];
+      }
+    });
+  };
+
+  // Count of urban and architecture themed photos
+  const urbanPhotosCount = useMemo(() => {
+    return libraryPhotos.filter(p => {
+      const c = (p.category || '').toLowerCase();
+      const tags = p.tags || p.aiTags || [];
+      const hasTag = tags.some(t => t.toLowerCase() === 'urban' || t.toLowerCase() === 'architecture' || t.toLowerCase() === 'city' || t.toLowerCase() === 'building' || t.toLowerCase() === 'skyline');
+      return c === 'urban' || c === 'architecture' || hasTag;
+    }).length;
+  }, [libraryPhotos]);
+
+  // Dedicated 'Urban' filter button handler that updates selectedCategories to include 'urban' and 'architecture'
+  const isUrbanFilterActive = useMemo(() => {
+    return selectedCategories.some(c => c.toLowerCase() === 'urban') && selectedCategories.some(c => c.toLowerCase() === 'architecture');
+  }, [selectedCategories]);
+
+  const handleToggleUrbanFilter = () => {
+    setSelectedCategories(prev => {
+      const isCurrentlyActive = prev.some(c => c.toLowerCase() === 'urban') && prev.some(c => c.toLowerCase() === 'architecture');
+      if (isCurrentlyActive) {
+        return prev.filter(c => c.toLowerCase() !== 'urban' && c.toLowerCase() !== 'architecture');
+      } else {
+        const withoutThem = prev.filter(c => c.toLowerCase() !== 'urban' && c.toLowerCase() !== 'architecture');
+        return [...withoutThem, 'urban', 'architecture'];
+      }
+    });
+  };
+
+  // Count of work and document themed photos
+  const workPhotosCount = useMemo(() => {
+    return libraryPhotos.filter(p => {
+      const c = (p.category || '').toLowerCase();
+      const tags = p.tags || p.aiTags || [];
+      const hasTag = tags.some(t => t.toLowerCase() === 'work' || t.toLowerCase() === 'document' || t.toLowerCase() === 'office' || t.toLowerCase() === 'receipt' || t.toLowerCase() === 'text' || t.toLowerCase() === 'documents');
+      return c === 'work' || c === 'document' || c === 'documents' || hasTag;
+    }).length;
+  }, [libraryPhotos]);
+
+  // Dedicated 'Work' filter button handler that updates selectedCategories to include 'work' and 'document'
+  const isWorkFilterActive = useMemo(() => {
+    return selectedCategories.some(c => c.toLowerCase() === 'work') && selectedCategories.some(c => c.toLowerCase() === 'document');
+  }, [selectedCategories]);
+
+  const handleToggleWorkFilter = () => {
+    setSelectedCategories(prev => {
+      const isCurrentlyActive = prev.some(c => c.toLowerCase() === 'work') && prev.some(c => c.toLowerCase() === 'document');
+      if (isCurrentlyActive) {
+        return prev.filter(c => c.toLowerCase() !== 'work' && c.toLowerCase() !== 'document');
+      } else {
+        const withoutThem = prev.filter(c => c.toLowerCase() !== 'work' && c.toLowerCase() !== 'document');
+        return [...withoutThem, 'work', 'document'];
+      }
+    });
+  };
 
   // FastView Profile State & Listener for PC vs Mobile Dual-Mode
   const [fastViewProfile, setFastViewProfile] = useState(() => fastViewEngine.getProfileConfig());
@@ -284,6 +631,39 @@ export const LibraryTab = ({
       return 0;
     });
   }, [filteredLibraryPhotos, viewSortBy, viewSortOrder]);
+
+  // Unique animation key derived from filter and sort criteria to trigger staggered fade-in animations
+  const filterSortAnimationKey = useMemo(() => {
+    return [
+      searchQuery.trim(),
+      selectedCategories.slice().sort().join(','),
+      selectedQualityTags.slice().sort().join(','),
+      selectedFormats.slice().sort().join(','),
+      selectedYears.slice().sort().join(','),
+      selectedLocations.slice().sort().join(','),
+      selectedSizes.slice().sort().join(','),
+      selectedOrientations.slice().sort().join(','),
+      selectedCameras.slice().sort().join(','),
+      viewSortBy,
+      viewSortOrder,
+      viewLayout,
+      viewGroupBy
+    ].join('::');
+  }, [
+    searchQuery,
+    selectedCategories,
+    selectedQualityTags,
+    selectedFormats,
+    selectedYears,
+    selectedLocations,
+    selectedSizes,
+    selectedOrientations,
+    selectedCameras,
+    viewSortBy,
+    viewSortOrder,
+    viewLayout,
+    viewGroupBy
+  ]);
 
   const [visibleCount, setVisibleCount] = useState(120);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -373,7 +753,7 @@ export const LibraryTab = ({
       return (
         <div className="flex flex-col gap-2 bg-slate-950/20 p-2 rounded-xl border border-white/5">
           {slicedPhotos.map((photo, idx) => {
-            const isSelected = isMultiSelectMode ? selectedPhotoIds.includes(photo.id!) : selectedPhotoId === photo.id;
+            const isSelected = isMultiSelectMode || selectedPhotoIds.length > 0 ? selectedPhotoIds.includes(photo.id!) : selectedPhotoId === photo.id;
             const filename = photo.path.split('/').pop() || 'document';
             const sizeMb = (photo.size / (1024 * 1024)).toFixed(2);
             
@@ -383,10 +763,17 @@ export const LibraryTab = ({
             const isDocText = photo.path?.toLowerCase().match(/\.(txt|csv|json|md)$/);
 
             return (
-              <div 
-                key={`${prefix}-${photo.id}-${idx}`}
+              <motion.div 
+                key={`list-photo-${filterSortAnimationKey}-${prefix}-${photo.id}-${idx}`}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{
+                  duration: 0.24,
+                  delay: Math.min((idx % 24) * 0.02, 0.3),
+                  ease: [0.22, 1, 0.36, 1],
+                }}
                 onClick={() => {
-                  if (isMultiSelectMode) {
+                  if (isMultiSelectMode || selectedPhotoIds.length > 0) {
                     setSelectedPhotoIds(prev => 
                       prev.includes(photo.id!) ? prev.filter(id => id !== photo.id) : [...prev, photo.id!]
                     );
@@ -433,7 +820,7 @@ export const LibraryTab = ({
                     {sizeMb} MB
                   </span>
                 </div>
-              </div>
+              </motion.div>
             );
           })}
         </div>
@@ -483,7 +870,7 @@ export const LibraryTab = ({
             </thead>
             <tbody className="divide-y divide-white/5 font-mono">
               {slicedPhotos.map((photo, idx) => {
-                const isSelected = isMultiSelectMode ? selectedPhotoIds.includes(photo.id!) : selectedPhotoId === photo.id;
+                const isSelected = isMultiSelectMode || selectedPhotoIds.length > 0 ? selectedPhotoIds.includes(photo.id!) : selectedPhotoId === photo.id;
                 const filename = photo.path.split('/').pop()?.split('\\').pop() || 'document';
                 const folderPath = photo.path.includes('\\') 
                   ? photo.path.substring(0, photo.path.lastIndexOf('\\') + 1)
@@ -499,10 +886,17 @@ export const LibraryTab = ({
                 const isDocText = photo.path?.toLowerCase().match(/\.(txt|csv|json|md)$/);
 
                 return (
-                  <tr 
-                    key={`${prefix}-${photo.id}-${idx}`}
+                  <motion.tr 
+                    key={`details-row-${filterSortAnimationKey}-${prefix}-${photo.id}-${idx}`}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      duration: 0.22,
+                      delay: Math.min((idx % 30) * 0.015, 0.25),
+                      ease: [0.22, 1, 0.36, 1],
+                    }}
                     onClick={() => {
-                      if (isMultiSelectMode) {
+                      if (isMultiSelectMode || selectedPhotoIds.length > 0) {
                         setSelectedPhotoIds(prev => 
                           prev.includes(photo.id!) ? prev.filter(id => id !== photo.id) : [...prev, photo.id!]
                         );
@@ -586,7 +980,7 @@ export const LibraryTab = ({
                         <ExternalLink size={12} />
                       </button>
                     </td>
-                  </tr>
+                  </motion.tr>
                 );
               })}
             </tbody>
@@ -631,27 +1025,38 @@ export const LibraryTab = ({
         overscan={2}
         gridClassName={`grid ${gridClass}`}
         renderItem={(photo, idx) => (
-          <PhotoCard 
-            key={`${prefix}-${photo.id}-${idx}`}
-            photo={photo} 
-            selected={isMultiSelectMode ? selectedPhotoIds.includes(photo.id!) : selectedPhotoId === photo.id}
-            onClick={() => {
-              if (isMultiSelectMode) {
-                setSelectedPhotoIds(prev => 
-                  prev.includes(photo.id!) ? prev.filter(id => id !== photo.id) : [...prev, photo.id!]
-                );
-              } else {
-                setSelectedPhotoId(photo.id || null);
-              }
+          <motion.div
+            key={`grid-photo-${filterSortAnimationKey}-${prefix}-${photo.id}-${idx}`}
+            initial={{ opacity: 0, y: 16, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{
+              duration: 0.28,
+              delay: Math.min((idx % 30) * 0.025, 0.35),
+              ease: [0.22, 1, 0.36, 1],
             }}
-            onEnhance={handleEnhance} 
-            onAnimate={onAnimatePhoto}
-            onContextMenu={handleContextMenu}
-            addNotification={addNotification}
-            onDoubleClick={(p) => {
-              SystemAPI.openInDefaultApp(p, addNotification);
-            }}
-          />
+            className="w-full h-full"
+          >
+            <PhotoCard 
+              photo={photo} 
+              selected={isMultiSelectMode || selectedPhotoIds.length > 0 ? selectedPhotoIds.includes(photo.id!) : selectedPhotoId === photo.id}
+              onClick={() => {
+                if (isMultiSelectMode || selectedPhotoIds.length > 0) {
+                  setSelectedPhotoIds(prev => 
+                    prev.includes(photo.id!) ? prev.filter(id => id !== photo.id) : [...prev, photo.id!]
+                  );
+                } else {
+                  setSelectedPhotoId(photo.id || null);
+                }
+              }}
+              onEnhance={handleEnhance} 
+              onAnimate={onAnimatePhoto}
+              onContextMenu={handleContextMenu}
+              addNotification={addNotification}
+              onDoubleClick={(p) => {
+                SystemAPI.openInDefaultApp(p, addNotification);
+              }}
+            />
+          </motion.div>
         )}
       />
     );
@@ -703,6 +1108,228 @@ export const LibraryTab = ({
           <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
           {syncing ? t('syncing') : t('syncDisk')}
         </button>
+
+        {/* 'Select by Category' Header Filter Dropdown */}
+        <div className="relative shrink-0" ref={headerCategoryDropdownRef}>
+          <button
+            type="button"
+            onClick={() => setShowHeaderCategoryDropdown(!showHeaderCategoryDropdown)}
+            className={`flex items-center gap-2 px-4 py-3 rounded-2xl border transition-all text-sm font-bold cursor-pointer shadow-md ${
+              selectedCategories.length > 0
+                ? 'bg-purple-600/30 border-purple-500/60 text-purple-200 shadow-purple-500/20 ring-1 ring-purple-500/40'
+                : 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
+            }`}
+            title={language === 'ko' ? '카테고리별 사진 필터링 선택' : 'Select by Category filter'}
+          >
+            <Filter size={16} className={selectedCategories.length > 0 ? 'text-purple-300 animate-pulse' : 'text-purple-400'} />
+            <span className="truncate max-w-[130px] sm:max-w-[180px]">
+              {selectedCategories.length === 0
+                ? (language === 'ko' ? '카테고리 선택' : 'Select by Category')
+                : selectedCategories.length === 1
+                ? `${getCategoryIcon(selectedCategories[0])} ${getLocalizedCategory(selectedCategories[0], t)}`
+                : `${language === 'ko' ? '카테고리 ' : 'Categories '}(${selectedCategories.length})`}
+            </span>
+            <ChevronDown size={14} className={`transition-transform duration-200 ${showHeaderCategoryDropdown ? 'rotate-180 text-white' : 'text-slate-400'}`} />
+          </button>
+
+          <AnimatePresence>
+            {showHeaderCategoryDropdown && (
+              <motion.div
+                initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                transition={{ duration: 0.15 }}
+                className="absolute right-0 mt-2 w-64 bg-[#0f172a]/95 border border-purple-500/30 rounded-2xl shadow-2xl backdrop-blur-xl z-[500] p-2 space-y-1 overflow-hidden"
+              >
+                <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+                    <Filter size={12} className="text-purple-400" />
+                    {language === 'ko' ? '카테고리 필터' : 'Select Category'}
+                  </span>
+                  {selectedCategories.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCategories([]);
+                        setShowHeaderCategoryDropdown(false);
+                      }}
+                      className="text-[9px] text-rose-400 hover:text-rose-300 font-bold transition-colors cursor-pointer"
+                    >
+                      {language === 'ko' ? '전체 초기화' : 'Reset'}
+                    </button>
+                  )}
+                </div>
+
+                <div className="max-h-72 overflow-y-auto no-scrollbar space-y-0.5 py-1">
+                  {/* All Categories option */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCategories([]);
+                      setShowHeaderCategoryDropdown(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      selectedCategories.length === 0
+                        ? 'bg-purple-600 text-white shadow-md'
+                        : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span>🖼️</span>
+                      <span>{language === 'ko' ? '전체 (All)' : 'All Categories'}</span>
+                    </div>
+                    <span className="text-[10px] opacity-70 font-mono">({libraryPhotos.length})</span>
+                  </button>
+
+                  <div className="h-px bg-white/5 my-1" />
+
+                  {/* List of preset & detected categories */}
+                  {categoryDropdownOptions.map(catOption => {
+                    const isSelected = selectedCategories.some(c => c.toLowerCase() === catOption.name.toLowerCase());
+                    return (
+                      <button
+                        key={catOption.name}
+                        type="button"
+                        onClick={() => {
+                          const nameLower = catOption.name.toLowerCase();
+                          if (nameLower === 'nature' || nameLower === 'landscape') {
+                            handleToggleNatureFilter();
+                          } else if (nameLower === 'people' || nameLower === 'portrait') {
+                            handleTogglePeopleFilter();
+                          } else if (nameLower === 'travel') {
+                            handleToggleTravelFilter();
+                          } else {
+                            setSelectedCategories(prev => {
+                              const exists = prev.some(c => c.toLowerCase() === catOption.name.toLowerCase());
+                              if (exists) {
+                                return prev.filter(c => c.toLowerCase() !== catOption.name.toLowerCase());
+                              } else {
+                                return [...prev, catOption.name];
+                              }
+                            });
+                          }
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-purple-600 text-white shadow-md ring-1 ring-purple-400'
+                            : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span>{getCategoryIcon(catOption.name)}</span>
+                          <span className="truncate">{getLocalizedCategory(catOption.name, t)}</span>
+                        </div>
+                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${isSelected ? 'bg-white/20 text-white' : 'bg-white/5 text-slate-400'}`}>
+                          {catOption.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* 'Sort By' Header Dropdown */}
+        <div className="relative shrink-0" ref={sortDropdownRef}>
+          <button
+            type="button"
+            onClick={() => setShowSortDropdown(!showSortDropdown)}
+            className={`flex items-center gap-2 px-4 py-3 rounded-2xl border transition-all text-sm font-bold cursor-pointer shadow-md ${
+              showSortDropdown 
+                ? 'bg-indigo-600/20 border-indigo-500/60 text-indigo-200' 
+                : 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
+            }`}
+            title={language === 'ko' ? '정렬 기준 선택' : 'Sort photos by'}
+          >
+            <ArrowUpDown size={16} className="text-indigo-400" />
+            <span className="truncate max-w-[100px] sm:max-w-[140px]">
+              {viewSortBy === 'dateTaken' ? (language === 'ko' ? '촬영 날짜' : 'Date Taken') :
+               viewSortBy === 'size' ? (language === 'ko' ? '파일 크기' : 'File Size') :
+               viewSortBy === 'name' ? (language === 'ko' ? '파일명' : 'File Name') :
+               viewSortBy === 'category' ? (language === 'ko' ? '카테고리' : 'Category') :
+               viewSortBy === 'qualityScore' ? (language === 'ko' ? '품질 점수' : 'Quality Score') :
+               (language === 'ko' ? 'AI 미적 점수' : 'AI Score')}
+              {` (${viewSortOrder === 'desc' ? (language === 'ko' ? '내림' : 'Desc') : (language === 'ko' ? '올림' : 'Asc')})`}
+            </span>
+            <ChevronDown size={14} className={`transition-transform duration-200 ${showSortDropdown ? 'rotate-180 text-white' : 'text-slate-400'}`} />
+          </button>
+
+          <AnimatePresence>
+            {showSortDropdown && (
+              <motion.div
+                initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                transition={{ duration: 0.15 }}
+                className="absolute right-0 mt-2 w-56 bg-[#0f172a]/95 border border-indigo-500/30 rounded-2xl shadow-2xl backdrop-blur-xl z-[500] p-2 space-y-1"
+              >
+                <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+                    <ArrowUpDown size={12} className="text-indigo-400" />
+                    {language === 'ko' ? '정렬 기준' : 'Sort By'}
+                  </span>
+                </div>
+
+                <div className="space-y-0.5 py-1">
+                  {[
+                    { id: 'dateTaken', label: language === 'ko' ? '촬영 날짜' : 'Date Taken', icon: <Clock size={14} /> },
+                    { id: 'size', label: language === 'ko' ? '파일 크기' : 'File Size', icon: <HardDrive size={14} /> },
+                    { id: 'name', label: language === 'ko' ? '파일명' : 'File Name', icon: <Type size={14} /> },
+                    { id: 'category', label: language === 'ko' ? '카테고리' : 'Category', icon: <Filter size={14} /> },
+                    { id: 'qualityScore', label: language === 'ko' ? '품질 점수' : 'Quality Score', icon: <Zap size={14} /> },
+                    { id: 'aiScore', label: language === 'ko' ? 'AI 미적 점수' : 'AI Score', icon: <Sparkles size={14} /> },
+                  ].map(option => (
+                    <button
+                      key={option.id}
+                      onClick={() => setViewSortBy(option.id as any)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        viewSortBy === option.id 
+                          ? 'bg-indigo-600 text-white shadow-md' 
+                          : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="opacity-70">{option.icon}</span>
+                        <span>{option.label}</span>
+                      </div>
+                      {viewSortBy === option.id && <Check size={12} />}
+                    </button>
+                  ))}
+
+                  <div className="h-px bg-white/5 my-1" />
+
+                  {/* Sort Order Toggle */}
+                  <div className="grid grid-cols-2 gap-1 p-1">
+                    <button
+                      onClick={() => setViewSortOrder('asc')}
+                      className={`px-2 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all flex items-center justify-center gap-1.5 ${
+                        viewSortOrder === 'asc' 
+                          ? 'bg-indigo-500/30 border border-indigo-400/50 text-white' 
+                          : 'bg-white/5 text-slate-500 hover:text-white border border-transparent'
+                      }`}
+                    >
+                      <ArrowUp size={12} />
+                      {language === 'ko' ? '오름차순' : 'Asc'}
+                    </button>
+                    <button
+                      onClick={() => setViewSortOrder('desc')}
+                      className={`px-2 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all flex items-center justify-center gap-1.5 ${
+                        viewSortOrder === 'desc' 
+                          ? 'bg-indigo-500/30 border border-indigo-400/50 text-white' 
+                          : 'bg-white/5 text-slate-500 hover:text-white border border-transparent'
+                      }`}
+                    >
+                      <ArrowDown size={12} />
+                      {language === 'ko' ? '내림차순' : 'Desc'}
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-white/5 p-4 rounded-2xl border border-white/5 mb-6">
@@ -713,15 +1340,178 @@ export const LibraryTab = ({
           >
             {t('aiAll')}
           </button>
-          {(Object.entries(categoryStats) as [string, { count: number, size: number }][]).map(([cat, data], idx) => (
+
+          <Tooltip
+            title={language === 'ko' ? '자연 및 풍경 필터' : 'Nature & Landscape Filter'}
+            content={language === 'ko' ? "'nature' 및 'landscape' 카테고리를 필터에 추가하여 자연·풍경 테마 사진만 즉시 분리 표시합니다." : "Updates selectedCategories to include 'nature' and 'landscape' to quickly isolate nature-themed photos."}
+          >
             <button
-              key={`${cat}-${idx}`}
-              onClick={() => setSelectedCategories(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap ${selectedCategories.includes(cat) ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-400 hover:text-white'}`}
+              onClick={handleToggleNatureFilter}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 border shadow-sm ${
+                isNatureFilterActive
+                  ? 'bg-emerald-600 border-emerald-400 text-white shadow-emerald-600/30 ring-1 ring-emerald-400'
+                  : 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30 text-emerald-300 hover:text-white'
+              }`}
             >
-              {getLocalizedCategory(cat, t)} ({data.count})
+              <span>🌿</span>
+              <span>{language === 'ko' ? '자연 (Nature)' : 'Nature'}</span>
+              {naturePhotosCount > 0 && (
+                <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                  isNatureFilterActive
+                    ? 'bg-white/20 text-white'
+                    : 'bg-emerald-500/20 text-emerald-300'
+                }`}>
+                  {naturePhotosCount}
+                </span>
+              )}
             </button>
-          ))}
+          </Tooltip>
+
+          <Tooltip
+            title={language === 'ko' ? '풍경 및 자연 필터' : 'Landscape & Nature Filter'}
+            content={language === 'ko' ? "'nature' 및 'landscape' 카테고리를 필터에 추가하여 풍경·자연 테마 사진만 즉시 분리 표시합니다." : "Updates selectedCategories to include 'nature' and 'landscape' to quickly isolate landscape and nature photos."}
+          >
+            <button
+              onClick={handleToggleLandscapeFilter}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 border shadow-sm ${
+                isLandscapeFilterActive
+                  ? 'bg-teal-600 border-teal-400 text-white shadow-teal-600/30 ring-1 ring-teal-400'
+                  : 'bg-teal-500/10 hover:bg-teal-500/20 border-teal-500/30 text-teal-300 hover:text-white'
+              }`}
+            >
+              <span>🏞️</span>
+              <span>{language === 'ko' ? '풍경 (Landscape)' : 'Landscape'}</span>
+              {naturePhotosCount > 0 && (
+                <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                  isLandscapeFilterActive
+                    ? 'bg-white/20 text-white'
+                    : 'bg-teal-500/20 text-teal-300'
+                }`}>
+                  {naturePhotosCount}
+                </span>
+              )}
+            </button>
+          </Tooltip>
+
+          <Tooltip
+            title={language === 'ko' ? '인물 및 포트레이트 필터' : 'People & Portrait Filter'}
+            content={language === 'ko' ? "'people' 및 'portrait' 카테고리를 필터에 추가하여 인물·포트레이트 테마 사진만 즉시 분리 표시합니다." : "Updates selectedCategories to include 'people' and 'portrait' to quickly isolate photos featuring people."}
+          >
+            <button
+              onClick={handleTogglePeopleFilter}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 border shadow-sm ${
+                isPeopleFilterActive
+                  ? 'bg-blue-600 border-blue-400 text-white shadow-blue-600/30 ring-1 ring-blue-400'
+                  : 'bg-blue-500/10 hover:bg-blue-500/20 border-blue-500/30 text-blue-300 hover:text-white'
+              }`}
+            >
+              <span>👥</span>
+              <span>{language === 'ko' ? '인물 (People)' : 'People'}</span>
+              {peoplePhotosCount > 0 && (
+                <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                  isPeopleFilterActive
+                    ? 'bg-white/20 text-white'
+                    : 'bg-blue-500/20 text-blue-300'
+                }`}>
+                  {peoplePhotosCount}
+                </span>
+              )}
+            </button>
+          </Tooltip>
+
+          <Tooltip
+            title={language === 'ko' ? '여행 및 도시 필터' : 'Travel & Urban Filter'}
+            content={language === 'ko' ? "'travel' 및 'urban' 카테고리를 필터에 추가하여 여행·도시 테마 사진만 즉시 분리 표시합니다." : "Updates selectedCategories to include 'travel' and 'urban' to quickly isolate travel-themed photos."}
+          >
+            <button
+              onClick={handleToggleTravelFilter}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 border shadow-sm ${
+                isTravelFilterActive
+                  ? 'bg-amber-600 border-amber-400 text-white shadow-amber-600/30 ring-1 ring-amber-400'
+                  : 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-300 hover:text-white'
+              }`}
+            >
+              <span>✈️</span>
+              <span>{language === 'ko' ? '여행 (Travel)' : 'Travel'}</span>
+              {travelPhotosCount > 0 && (
+                <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                  isTravelFilterActive
+                    ? 'bg-white/20 text-white'
+                    : 'bg-amber-500/20 text-amber-300'
+                }`}>
+                  {travelPhotosCount}
+                </span>
+              )}
+            </button>
+          </Tooltip>
+
+          <Tooltip
+            title={language === 'ko' ? '도시 및 건축 필터' : 'Urban & Architecture Filter'}
+            content={language === 'ko' ? "'urban' 및 'architecture' 카테고리를 필터에 추가하여 도시·건축 테마 사진만 즉시 분리 표시합니다." : "Updates selectedCategories to include 'urban' and 'architecture' to quickly isolate city-themed photos."}
+          >
+            <button
+              onClick={handleToggleUrbanFilter}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 border shadow-sm ${
+                isUrbanFilterActive
+                  ? 'bg-cyan-600 border-cyan-400 text-white shadow-cyan-600/30 ring-1 ring-cyan-400'
+                  : 'bg-cyan-500/10 hover:bg-cyan-500/20 border-cyan-500/30 text-cyan-300 hover:text-white'
+              }`}
+            >
+              <span>🏙️</span>
+              <span>{language === 'ko' ? '도시 (Urban)' : 'Urban'}</span>
+              {urbanPhotosCount > 0 && (
+                <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                  isUrbanFilterActive
+                    ? 'bg-white/20 text-white'
+                    : 'bg-cyan-500/20 text-cyan-300'
+                }`}>
+                  {urbanPhotosCount}
+                </span>
+              )}
+            </button>
+          </Tooltip>
+
+          <Tooltip
+            title={language === 'ko' ? '업무 및 문서 필터' : 'Work & Document Filter'}
+            content={language === 'ko' ? "'work' 및 'document' 카테고리를 필터에 추가하여 업무·영수증·텍스트 테마 사진만 즉시 분리 표시합니다." : "Updates selectedCategories to include 'work' and 'document' to quickly isolate business-related photos."}
+          >
+            <button
+              onClick={handleToggleWorkFilter}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 border shadow-sm ${
+                isWorkFilterActive
+                  ? 'bg-slate-600 border-slate-400 text-white shadow-slate-600/30 ring-1 ring-slate-400'
+                  : 'bg-slate-500/10 hover:bg-slate-500/20 border-slate-500/30 text-slate-300 hover:text-white'
+              }`}
+            >
+              <span>💼</span>
+              <span>{language === 'ko' ? '업무 (Work)' : 'Work'}</span>
+              {workPhotosCount > 0 && (
+                <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                  isWorkFilterActive
+                    ? 'bg-white/20 text-white'
+                    : 'bg-slate-500/20 text-slate-300'
+                }`}>
+                  {workPhotosCount}
+                </span>
+              )}
+            </button>
+          </Tooltip>
+
+          {(Object.entries(categoryStats) as [string, { count: number, size: number }][]).map(([cat, data], idx) => {
+            const isCatSelected = selectedCategories.some(c => c.toLowerCase() === cat.toLowerCase());
+            return (
+              <button
+                key={`${cat}-${idx}`}
+                onClick={() => setSelectedCategories(prev => {
+                  const exists = prev.some(c => c.toLowerCase() === cat.toLowerCase());
+                  return exists ? prev.filter(c => c.toLowerCase() !== cat.toLowerCase()) : [...prev, cat];
+                })}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap ${isCatSelected ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-400 hover:text-white'}`}
+              >
+                {getLocalizedCategory(cat, t)} ({data.count})
+              </button>
+            );
+          })}
         </div>
         
         <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -735,6 +1525,20 @@ export const LibraryTab = ({
               <span>{language === 'ko' ? '필터 초기화' : 'Reset'}</span>
             </button>
           )}
+
+          <Tooltip
+            title={language === 'ko' ? '카테고리별 사진 선택' : 'Select by Category'}
+            content={language === 'ko' ? 'AI가 감지한 카테고리(자연, 인물 등)의 모든 사진을 즉시 일괄 하이라이트 선택합니다.' : 'Instantly select and highlight all photos in a specific category.'}
+          >
+            <button
+              type="button"
+              onClick={() => setShowCategorySelectMenu(true)}
+              className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border border-purple-500/30 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow-sm"
+            >
+              <Sparkles size={11} className="text-purple-400" />
+              <span>{language === 'ko' ? '카테고리별 선택' : 'Select by Category'}</span>
+            </button>
+          </Tooltip>
 
           <button
             onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
@@ -757,70 +1561,176 @@ export const LibraryTab = ({
           <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider mr-1">
             {language === 'ko' ? '적용된 필터:' : 'Active Filters:'}
           </span>
-          {selectedCategories.map(cat => (
-            <span key={`cat-${cat}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-600/40 text-indigo-200 border border-indigo-500/30">
-              {getLocalizedCategory(cat, t)}
-              <button onClick={() => setSelectedCategories(prev => prev.filter(c => c !== cat))} className="hover:text-white cursor-pointer ml-0.5">
-                <X size={10} />
-              </button>
-            </span>
-          ))}
-          {selectedQualityTags.map(q => (
-            <span key={`q-${q}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/30 text-amber-200 border border-amber-500/30">
-              {t(q.toLowerCase() as any)}
-              <button onClick={() => setSelectedQualityTags(prev => prev.filter(item => item !== q))} className="hover:text-white cursor-pointer ml-0.5">
-                <X size={10} />
-              </button>
-            </span>
-          ))}
-          {selectedSizes.map(s => (
-            <span key={`s-${s}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-fuchsia-600/30 text-fuchsia-200 border border-fuchsia-500/30">
-              {t(s.includes("Large") ? "largeSize" : s.includes("Medium") ? "mediumSize" : "smallSize" as any)}
-              <button onClick={() => setSelectedSizes(prev => prev.filter(item => item !== s))} className="hover:text-white cursor-pointer ml-0.5">
-                <X size={10} />
-              </button>
-            </span>
-          ))}
-          {selectedOrientations.map(o => (
-            <span key={`o-${o}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-cyan-600/30 text-cyan-200 border border-cyan-500/30">
-              {t(o.toLowerCase() as any)}
-              <button onClick={() => setSelectedOrientations(prev => prev.filter(item => item !== o))} className="hover:text-white cursor-pointer ml-0.5">
-                <X size={10} />
-              </button>
-            </span>
-          ))}
-          {selectedFormats.map(f => (
-            <span key={`f-${f}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-700/60 text-slate-200 border border-slate-600/40">
-              {f}
-              <button onClick={() => setSelectedFormats(prev => prev.filter(item => item !== f))} className="hover:text-white cursor-pointer ml-0.5">
-                <X size={10} />
-              </button>
-            </span>
-          ))}
-          {selectedYears.map(y => (
-            <span key={`y-${y}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-600/30 text-rose-200 border border-rose-500/30">
-              {y}
-              <button onClick={() => setSelectedYears(prev => prev.filter(item => item !== y))} className="hover:text-white cursor-pointer ml-0.5">
-                <X size={10} />
-              </button>
-            </span>
-          ))}
-          {selectedLocations.map(loc => (
-            <span key={`loc-${loc}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-orange-500/30 text-orange-200 border border-orange-500/30">
-              {loc}
-              <button onClick={() => handleSelectLocation(loc)} className="hover:text-white cursor-pointer ml-0.5">
-                <X size={10} />
-              </button>
-            </span>
-          ))}
-          {selectedCameras.map(c => (
-            <span key={`cam-${c}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-600/30 text-emerald-200 border border-emerald-500/30">
-              {c}
-              <button onClick={() => setSelectedCameras(prev => prev.filter(item => item !== c))} className="hover:text-white cursor-pointer ml-0.5">
-                <X size={10} />
-              </button>
-            </span>
-          ))}
+          <AnimatePresence mode="popLayout">
+            {selectedCategories.map(cat => (
+              <motion.span 
+                key={`cat-${cat}`} 
+                initial={{ opacity: 0, x: -10, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.15 } }}
+                layout
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-600/40 text-indigo-200 border border-indigo-500/30 shadow-sm"
+              >
+                <span className="opacity-80">{getCategoryIcon(cat)}</span>
+                <span>{getLocalizedCategory(cat, t)}</span>
+                <button 
+                  onClick={() => setSelectedCategories(prev => prev.filter(c => c !== cat))} 
+                  className="hover:text-white cursor-pointer ml-0.5 transition-colors p-0.5 rounded-full hover:bg-white/10"
+                  title={language === 'ko' ? '필터 제거' : 'Clear filter'}
+                >
+                  <X size={10} />
+                </button>
+              </motion.span>
+            ))}
+          </AnimatePresence>
+          <AnimatePresence mode="popLayout">
+            {selectedQualityTags.map(q => (
+              <motion.span 
+                key={`q-${q}`} 
+                initial={{ opacity: 0, x: -10, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.15 } }}
+                layout
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/30 text-amber-200 border border-amber-500/30 shadow-sm"
+              >
+                <span>{t(q.toLowerCase() as any)}</span>
+                <button 
+                  onClick={() => setSelectedQualityTags(prev => prev.filter(item => item !== q))} 
+                  className="hover:text-white cursor-pointer ml-0.5 transition-colors p-0.5 rounded-full hover:bg-white/10"
+                  title={language === 'ko' ? '필터 제거' : 'Clear filter'}
+                >
+                  <X size={10} />
+                </button>
+              </motion.span>
+            ))}
+          </AnimatePresence>
+          <AnimatePresence mode="popLayout">
+            {selectedSizes.map(s => (
+              <motion.span 
+                key={`s-${s}`} 
+                initial={{ opacity: 0, x: -10, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.15 } }}
+                layout
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-fuchsia-600/30 text-fuchsia-200 border border-fuchsia-500/30 shadow-sm"
+              >
+                <span>{t(s.includes("Large") ? "largeSize" : s.includes("Medium") ? "mediumSize" : "smallSize" as any)}</span>
+                <button 
+                  onClick={() => setSelectedSizes(prev => prev.filter(item => item !== s))} 
+                  className="hover:text-white cursor-pointer ml-0.5 transition-colors p-0.5 rounded-full hover:bg-white/10"
+                  title={language === 'ko' ? '필터 제거' : 'Clear filter'}
+                >
+                  <X size={10} />
+                </button>
+              </motion.span>
+            ))}
+          </AnimatePresence>
+          <AnimatePresence mode="popLayout">
+            {selectedOrientations.map(o => (
+              <motion.span 
+                key={`o-${o}`} 
+                initial={{ opacity: 0, x: -10, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.15 } }}
+                layout
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-cyan-600/30 text-cyan-200 border border-cyan-500/30 shadow-sm"
+              >
+                <span>{t(o.toLowerCase() as any)}</span>
+                <button 
+                  onClick={() => setSelectedOrientations(prev => prev.filter(item => item !== o))} 
+                  className="hover:text-white cursor-pointer ml-0.5 transition-colors p-0.5 rounded-full hover:bg-white/10"
+                  title={language === 'ko' ? '필터 제거' : 'Clear filter'}
+                >
+                  <X size={10} />
+                </button>
+              </motion.span>
+            ))}
+          </AnimatePresence>
+          <AnimatePresence mode="popLayout">
+            {selectedFormats.map(f => (
+              <motion.span 
+                key={`f-${f}`} 
+                initial={{ opacity: 0, x: -10, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.15 } }}
+                layout
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-700/60 text-slate-200 border border-slate-600/40 shadow-sm"
+              >
+                <span>{f}</span>
+                <button 
+                  onClick={() => setSelectedFormats(prev => prev.filter(item => item !== f))} 
+                  className="hover:text-white cursor-pointer ml-0.5 transition-colors p-0.5 rounded-full hover:bg-white/10"
+                  title={language === 'ko' ? '필터 제거' : 'Clear filter'}
+                >
+                  <X size={10} />
+                </button>
+              </motion.span>
+            ))}
+          </AnimatePresence>
+          <AnimatePresence mode="popLayout">
+            {selectedYears.map(y => (
+              <motion.span 
+                key={`y-${y}`} 
+                initial={{ opacity: 0, x: -10, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.15 } }}
+                layout
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-600/30 text-rose-200 border border-rose-500/30 shadow-sm"
+              >
+                <span>{y}</span>
+                <button 
+                  onClick={() => setSelectedYears(prev => prev.filter(item => item !== y))} 
+                  className="hover:text-white cursor-pointer ml-0.5 transition-colors p-0.5 rounded-full hover:bg-white/10"
+                  title={language === 'ko' ? '필터 제거' : 'Clear filter'}
+                >
+                  <X size={10} />
+                </button>
+              </motion.span>
+            ))}
+          </AnimatePresence>
+          <AnimatePresence mode="popLayout">
+            {selectedLocations.map(loc => (
+              <motion.span 
+                key={`loc-${loc}`} 
+                initial={{ opacity: 0, x: -10, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.15 } }}
+                layout
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-orange-500/30 text-orange-200 border border-orange-500/30 shadow-sm"
+              >
+                <MapPin size={10} className="opacity-70" />
+                <span>{loc}</span>
+                <button 
+                  onClick={() => handleSelectLocation(loc)} 
+                  className="hover:text-white cursor-pointer ml-0.5 transition-colors p-0.5 rounded-full hover:bg-white/10"
+                  title={language === 'ko' ? '필터 제거' : 'Clear filter'}
+                >
+                  <X size={10} />
+                </button>
+              </motion.span>
+            ))}
+          </AnimatePresence>
+          <AnimatePresence mode="popLayout">
+            {selectedCameras.map(c => (
+              <motion.span 
+                key={`cam-${c}`} 
+                initial={{ opacity: 0, x: -10, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.15 } }}
+                layout
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-600/30 text-emerald-200 border border-emerald-500/30 shadow-sm"
+              >
+                <span>{c}</span>
+                <button 
+                  onClick={() => setSelectedCameras(prev => prev.filter(item => item !== c))} 
+                  className="hover:text-white cursor-pointer ml-0.5 transition-colors p-0.5 rounded-full hover:bg-white/10"
+                  title={language === 'ko' ? '필터 제거' : 'Clear filter'}
+                >
+                  <X size={10} />
+                </button>
+              </motion.span>
+            ))}
+          </AnimatePresence>
         </div>
       )}
 
@@ -1060,6 +1970,19 @@ export const LibraryTab = ({
           </Tooltip>
 
           <Tooltip
+            title={language === 'ko' ? '카테고리 요약 통계' : 'Category Summary'}
+            content={language === 'ko' ? '전체 라이브러리의 카테고리별 사진 분포를 파이 차트와 요약 목록으로 확인합니다.' : 'Visual breakdown of photos by category using pie charts and summaries.'}
+          >
+            <button 
+              onClick={() => setShowCategorySummary(!showCategorySummary)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border cursor-pointer ${showCategorySummary ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}
+            >
+              <BarChart3 size={14} className={showCategorySummary ? 'scale-110' : ''} />
+              {language === 'ko' ? '카테고리 요약' : 'Category Summary'}
+            </button>
+          </Tooltip>
+
+          <Tooltip
             title={language === 'ko' ? '탐색기 보기 설정' : 'View Options'}
             content={language === 'ko' ? '그리드 크기, 정렬 기준, 그룹화 방식(카테고리/연도/확장자)을 설정합니다.' : 'Configure grid thumbnail size, sorting criteria, and grouping modes.'}
           >
@@ -1112,6 +2035,12 @@ export const LibraryTab = ({
       </AnimatePresence>
 
       <AnimatePresence>
+        {showCategorySummary && (
+          <CategorySummaryChart categoryStats={categoryStats} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {showMap && (
           <motion.div 
             key="photo-map-container"
@@ -1128,6 +2057,21 @@ export const LibraryTab = ({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Bulk Action Header Bar when photos are selected */}
+      <BulkActionHeaderBar
+        selectedPhotoIds={selectedPhotoIds}
+        allPhotos={libraryPhotos}
+        filteredPhotos={filteredLibraryPhotos}
+        onClearSelection={() => {
+          setSelectedPhotoIds([]);
+        }}
+        onSelectAllFiltered={() => {
+          setIsMultiSelectMode(true);
+          setSelectedPhotoIds(filteredLibraryPhotos.filter(p => p.id).map(p => p.id!));
+        }}
+        addNotification={addNotification}
+      />
 
       {filteredLibraryPhotos.length > 0 && (
         <div className="grid grid-cols-2 sm:flex sm:flex-row flex-wrap gap-2 w-full">
@@ -1169,6 +2113,220 @@ export const LibraryTab = ({
               <span>{isMultiSelectMode ? t('cancel') : t('select')}</span>
             </button>
           </Tooltip>
+
+          {/* Select by Category Popover */}
+          <div className="relative" ref={categorySelectMenuRef}>
+            <Tooltip
+              title={language === 'ko' ? '카테고리별 사진 선택' : 'Select by Category'}
+              content={language === 'ko' ? 'AI가 감지한 카테고리(자연, 인물, 음식 등)에 속한 모든 사진을 한 번에 하이라이트 선택합니다.' : 'Instantly highlight and select all photos in a specific AI-detected category like Nature or People.'}
+            >
+              <button 
+                type="button"
+                onClick={() => setShowCategorySelectMenu(!showCategorySelectMenu)}
+                className={`px-3 sm:px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 border cursor-pointer shadow-md ${
+                  showCategorySelectMenu
+                    ? 'bg-purple-600 border-purple-400 text-white shadow-purple-600/30 ring-1 ring-purple-400'
+                    : 'bg-gradient-to-r from-purple-600/20 via-indigo-600/20 to-blue-600/20 hover:from-purple-600/35 hover:via-indigo-600/35 hover:to-blue-600/35 border-purple-500/40 text-purple-300 hover:text-white'
+                }`}
+              >
+                <Sparkles size={13} className="text-purple-400" />
+                <span className="truncate">{language === 'ko' ? '카테고리별 선택' : 'Select by Category'}</span>
+                <ChevronDown size={12} className={`transition-transform duration-200 ${showCategorySelectMenu ? 'rotate-180 text-white' : 'text-purple-400'}`} />
+              </button>
+            </Tooltip>
+
+            {/* Dropdown Popover */}
+            <AnimatePresence>
+              {showCategorySelectMenu && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.96 }}
+                  transition={{ duration: 0.16 }}
+                  className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 w-80 sm:w-96 bg-slate-900/95 backdrop-blur-2xl border border-purple-500/30 rounded-2xl p-4 shadow-2xl z-[600] space-y-3 ring-1 ring-purple-500/20 max-h-[80vh] overflow-y-auto no-scrollbar"
+                >
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <div className="flex items-center gap-2">
+                      <Sparkles size={15} className="text-purple-400" />
+                      <div>
+                        <h4 className="text-xs font-black text-white uppercase tracking-wider">
+                          {language === 'ko' ? 'AI 카테고리별 사진 선택' : 'Select Photos by Category'}
+                        </h4>
+                        <p className="text-[10px] text-slate-400">
+                          {language === 'ko' ? '클릭 시 해당 카테고리 사진이 즉시 하이라이트됩니다.' : 'Click any category to highlight all its matching photos.'}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowCategorySelectMenu(false)}
+                      className="text-slate-400 hover:text-white text-xs font-bold p-1 cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {/* Fast One-Click Shortcuts for Key Categories (e.g. Nature, People) */}
+                  <div className="bg-white/5 p-2.5 rounded-xl border border-white/5 space-y-1.5">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                      ⚡ {language === 'ko' ? '빠른 추천 선택:' : 'Quick Shortcuts:'}
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {['Nature', 'People', 'Food', 'Travel'].map(shortcut => {
+                        const item = aiCategoryItems.find(c => c.name.toLowerCase() === shortcut.toLowerCase());
+                        const count = item ? item.count : 0;
+                        const isAll = item ? item.isAllSelected : false;
+                        return (
+                          <button
+                            type="button"
+                            key={shortcut}
+                            onClick={() => {
+                              handleSelectByCategory(shortcut, isAll ? 'remove' : 'replace');
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer border ${
+                              isAll
+                                ? 'bg-purple-600 border-purple-400 text-white shadow-sm'
+                                : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
+                            }`}
+                          >
+                            <span>{getCategoryIcon(shortcut)}</span>
+                            <span>{getLocalizedCategory(shortcut, t)}</span>
+                            <span className="text-[9px] opacity-70 font-mono">({count})</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Complete Category List with detailed actions */}
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                    {aiCategoryItems.length === 0 ? (
+                      <div className="text-center py-6 text-slate-500 text-xs">
+                        {language === 'ko' ? '감지된 카테고리가 없습니다.' : 'No detected categories available.'}
+                      </div>
+                    ) : (
+                      aiCategoryItems.map((cat) => {
+                        return (
+                          <div
+                            key={cat.name}
+                            className={`group flex items-center justify-between p-2 rounded-xl border transition-all ${
+                              cat.isAllSelected
+                                ? 'bg-purple-950/40 border-purple-500/50 text-white ring-1 ring-purple-500/30'
+                                : cat.isPartiallySelected
+                                  ? 'bg-amber-950/30 border-amber-500/40 text-slate-200'
+                                  : 'bg-white/5 hover:bg-white/10 border-white/5 text-slate-300 hover:text-white'
+                            }`}
+                          >
+                            {/* Main clickable area to replace selection */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleSelectByCategory(cat.name, cat.isAllSelected ? 'remove' : 'replace');
+                              }}
+                              className="flex items-center gap-2.5 flex-1 min-w-0 text-left cursor-pointer"
+                            >
+                              <span className="text-base shrink-0">{cat.icon}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-bold truncate">
+                                    {cat.localizedName}
+                                  </span>
+                                  {cat.name !== cat.localizedName && (
+                                    <span className="text-[9px] text-slate-400 font-mono">
+                                      ({cat.name})
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[9px] text-slate-400 font-mono">
+                                  {cat.count} {language === 'ko' ? '장' : 'photos'} · {(cat.size / 1024 / 1024).toFixed(1)} MB
+                                </div>
+                              </div>
+                            </button>
+
+                            {/* Status badge & Quick secondary actions */}
+                            <div className="flex items-center gap-1 shrink-0 ml-2">
+                              {cat.isAllSelected ? (
+                                <span className="bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[9px] font-black px-2 py-0.5 rounded-md flex items-center gap-1">
+                                  <Check size={10} className="stroke-[3]" />
+                                  {language === 'ko' ? '선택됨' : 'Selected'}
+                                </span>
+                              ) : cat.isPartiallySelected ? (
+                                <span className="bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[9px] font-black px-1.5 py-0.5 rounded-md">
+                                  {cat.selectedCount}/{cat.count}
+                                </span>
+                              ) : null}
+
+                              {/* Plus button to append to selection */}
+                              <Tooltip
+                                title={language === 'ko' ? '선택에 추가' : 'Add to Selection'}
+                                content={language === 'ko' ? '현재 선택을 유지하고 이 카테고리의 사진들을 추가합니다.' : 'Append photos from this category to active selection.'}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSelectByCategory(cat.name, 'add');
+                                  }}
+                                  className="p-1.5 rounded-lg bg-white/5 hover:bg-purple-600 text-slate-400 hover:text-white text-[10px] font-bold transition-colors cursor-pointer"
+                                  title="Add"
+                                >
+                                  +
+                                </button>
+                              </Tooltip>
+
+                              {/* Minus button to remove from selection */}
+                              {cat.selectedCount > 0 && (
+                                <Tooltip
+                                  title={language === 'ko' ? '선택에서 제외' : 'Remove from Selection'}
+                                  content={language === 'ko' ? '현재 선택에서 이 카테고리의 사진들을 제외합니다.' : 'Remove photos from this category from active selection.'}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSelectByCategory(cat.name, 'remove');
+                                    }}
+                                    className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-600 text-rose-300 hover:text-white text-[10px] font-bold transition-colors cursor-pointer"
+                                    title="Deselect"
+                                  >
+                                    -
+                                  </button>
+                                </Tooltip>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Footer actions */}
+                  <div className="flex items-center justify-between pt-2 border-t border-white/10 text-xs">
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      {language === 'ko' ? '총 선택:' : 'Selected:'} <strong className="text-white">{selectedPhotoIds.length}</strong> {language === 'ko' ? '장' : 'items'}
+                    </span>
+                    {selectedPhotoIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedPhotoIds([]);
+                          addNotification(
+                            language === 'ko' ? '선택 초기화' : 'Selection Cleared',
+                            language === 'ko' ? '모든 사진 선택을 해제했습니다.' : 'Cleared all selected photos.',
+                            'info'
+                          );
+                        }}
+                        className="text-[10px] text-rose-400 hover:text-rose-300 font-bold transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        <RotateCcw size={10} />
+                        <span>{language === 'ko' ? '선택 전체 해제' : 'Clear Selection'}</span>
+                      </button>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
 
           {isMultiSelectMode && selectedPhotoIds.length > 0 && handleBatchRename && (
             <Tooltip

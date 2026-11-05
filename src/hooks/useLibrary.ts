@@ -161,7 +161,14 @@ export function useLibrary(
       // 2. Category Filter
       if (selectedCategories.length > 0) {
         const cat = p.category || 'Uncategorized';
-        if (!selectedCategories.includes(cat) && !selectedCategories.some(c => c.toLowerCase() === cat.toLowerCase())) {
+        const photoTags = p.tags || p.aiTags || [];
+        const hasFaces = (p.detectedFaces ?? 0) > 0;
+        const matchesCategory = 
+          selectedCategories.includes(cat) || 
+          selectedCategories.some(c => c.toLowerCase() === cat.toLowerCase()) ||
+          photoTags.some(tag => selectedCategories.some(c => c.toLowerCase() === tag.toLowerCase())) ||
+          (hasFaces && selectedCategories.some(c => c.toLowerCase() === 'people' || c.toLowerCase() === 'portrait'));
+        if (!matchesCategory) {
           return false;
         }
       }

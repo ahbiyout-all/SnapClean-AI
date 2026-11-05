@@ -44,7 +44,10 @@ import {
   Smartphone,
   Baby,
   MessageCircle,
-  HelpCircle
+  HelpCircle,
+  GitMerge,
+  RotateCcw,
+  Undo2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, PhotoRecord } from '../../services/db';
@@ -61,7 +64,14 @@ import {
   clusterPhotosIntoChapters,
   enhancePhotobookWithAi,
   populateBookWithAiNarrative,
-  applyAiNarrativeToPhotobook
+  applyAiNarrativeToPhotobook,
+  mergeEvents,
+  undoMergeEvent,
+  getMergeHistory,
+  recordMergeHistory,
+  markMergeHistoryReverted,
+  clearMergeHistory,
+  MergeHistoryRecord
 } from '../../services/photobookGenerator';
 import { generateEventSummary, EventSummary, filterIrrelevantPhotos } from '../../services/geminiService';
 import { FlipBookViewer, BookPhotoView, getFallbackPhotoUrl } from '../photobook/FlipBookViewer';
@@ -105,6 +115,150 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
     photoCount: number;
     affectedBookCount: number;
   } | null>(null);
+
+  // Manual Event Merging States
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [mergeEventAId, setMergeEventAId] = useState<string>('');
+  const [mergeEventBId, setMergeEventBId] = useState<string>('');
+  const [mergeCustomTitle, setMergeCustomTitle] = useState('');
+  const [mergeSelectedTone, setMergeSelectedTone] = useState<StoryTone>('lyrical');
+  const [mergeSelectedTheme, setMergeSelectedTheme] = useState<PhotobookTheme>('classic-hardcover');
+  const [enableAiSummaryOnMerge, setEnableAiSummaryOnMerge] = useState(true);
+  const [isMergingEvents, setIsMergingEvents] = useState(false);
+  const [mergeStatus, setMergeStatus] = useState<string>('');
+
+  // Merge History Ledger & Undo States
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [mergeHistoryList, setMergeHistoryList] = useState<MergeHistoryRecord[]>(() => getMergeHistory());
+  const [undoToast, setUndoToast] = useState<{ visible: boolean; record: MergeHistoryRecord } | null>(null);
+  const [isUndoingMerge, setIsUndoingMerge] = useState(false);
+  const [undoStatusMessage, setUndoStatusMessage] = useState<string | null>(null);
+
+  const activeMergeHistoryCount = useMemo(() => {
+    return mergeHistoryList.filter(r => !r.isReverted).length;
+  }, [mergeHistoryList]);
+
+  // Auto-dismiss undo toast after 15 seconds
+  useEffect(() => {
+    if (undoToast?.visible) {
+      const timer = setTimeout(() => {
+        setUndoToast(null);
+      }, 15000);
+      return () => clearTimeout(timer);
+    }
+  }, [undoToast]);
+
+  const handleOpenMergeModal = (eventIds?: string[]) => {
+    const ids = eventIds || selectedBookIds;
+    const aId = ids[0] || (photobooks[0]?.id || '');
+    const bId = ids[1] || (photobooks.find(b => b.id !== aId)?.id || '');
+    setMergeEventAId(aId);
+    setMergeEventBId(bId);
+
+    const bA = photobooks.find(b => b.id === aId);
+    const bB = photobooks.find(b => b.id === bId);
+    if (bA && bB) {
+      setMergeCustomTitle(`${bA.title} & ${bB.title}`);
+      setMergeSelectedTone(bA.storyTone || bB.storyTone || globalAiTone || 'lyrical');
+      setMergeSelectedTheme(bA.theme || bB.theme || 'classic-hardcover');
+    } else {
+      setMergeCustomTitle('');
+    }
+    setShowMergeModal(true);
+  };
+
+  const handleExecuteMerge = async () => {
+    const eventA = photobooks.find(b => b.id === mergeEventAId);
+    const eventB = photobooks.find(b => b.id === mergeEventBId);
+    if (!eventA || !eventB || eventA.id === eventB.id) return;
+
+    setIsMergingEvents(true);
+    setMergeStatus(language === 'ko' ? '두 이벤트의 사진 추출 및 통합 중...' : 'Extracting & combining photos...');
+
+    try {
+      setMergeStatus(language === 'ko' ? 'AI 감성 이벤트 요약 및 내러티브 합성 중...' : 'Synthesizing AI event summary narrative...');
+      const { mergedBook, summary } = await mergeEvents(eventA, eventB, {
+        customTitle: mergeCustomTitle.trim() || undefined,
+        storyTone: mergeSelectedTone,
+        theme: mergeSelectedTheme,
+        enableAiSummary: enableAiSummaryOnMerge,
+      });
+
+      // Record in Merge History Ledger for Undo functionality
+      const historyRecord: MergeHistoryRecord = {
+        id: `merge_hist_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        timestamp: Date.now(),
+        mergedBookId: mergedBook.id,
+        mergedBookTitle: mergedBook.title,
+        originalEvents: [eventA, eventB],
+        photoCount: mergedBook.totalPhotos,
+        summaryTitle: summary.title,
+        storyTone: mergeSelectedTone,
+        isReverted: false,
+      };
+      recordMergeHistory(historyRecord);
+      setMergeHistoryList(getMergeHistory());
+      setUndoToast({ visible: true, record: historyRecord });
+
+      setMergeStatus(language === 'ko' ? '사진첩 저장 중...' : 'Saving unified photobook...');
+      await loadBooks();
+      setSelectedBookIds([]);
+      setShowMergeModal(false);
+
+      // Show completion narrative modal
+      setNarrativeResult({
+        summary,
+        bookTitle: mergedBook.title,
+        bookId: mergedBook.id,
+        pageCount: mergedBook.pages.length,
+        photoCount: mergedBook.totalPhotos,
+        affectedBookCount: 2,
+      });
+    } catch (err) {
+      console.error('[Merge Events Error]:', err);
+    } finally {
+      setIsMergingEvents(false);
+      setMergeStatus('');
+    }
+  };
+
+  // Reverts accidental merge from history ledger or immediate toast
+  const handleUndoMerge = async (recordToUndo: MergeHistoryRecord) => {
+    if (isUndoingMerge) return;
+    setIsUndoingMerge(true);
+
+    try {
+      await undoMergeEvent(recordToUndo.mergedBookId, recordToUndo.originalEvents, recordToUndo.id);
+      await loadBooks();
+      setMergeHistoryList(getMergeHistory());
+
+      // If activeBook was the merged book, switch to eventA
+      if (activeBook?.id === recordToUndo.mergedBookId) {
+        setActiveBook(recordToUndo.originalEvents[0]);
+      }
+
+      // Dismiss immediate undo toast
+      setUndoToast(null);
+
+      // Close narrative result if it corresponds to this merged book
+      if (narrativeResult?.bookId === recordToUndo.mergedBookId) {
+        setNarrativeResult(null);
+      }
+
+      const msg = language === 'ko'
+        ? `"${recordToUndo.mergedBookTitle}" 병합이 성공적으로 취소되고 원본 2개 이벤트("${recordToUndo.originalEvents[0].title}", "${recordToUndo.originalEvents[1].title}")가 복원되었습니다.`
+        : `Merge for "${recordToUndo.mergedBookTitle}" reverted. Restored "${recordToUndo.originalEvents[0].title}" and "${recordToUndo.originalEvents[1].title}".`;
+
+      setUndoStatusMessage(msg);
+      setTimeout(() => {
+        setUndoStatusMessage(null);
+      }, 6000);
+    } catch (err) {
+      console.error('[Undo Merge Error]:', err);
+    } finally {
+      setIsUndoingMerge(false);
+    }
+  };
 
   // Persistent AI Narrative Mode
   const [isAiNarrativeMode, setIsAiNarrativeMode] = useState<boolean>(() => {
@@ -1441,6 +1595,51 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                   </span>
                 </button>
 
+                {/* 🔀 Merge Events Action Button */}
+                <button
+                  type="button"
+                  onClick={() => handleOpenMergeModal()}
+                  disabled={photobooks.length < 2 || isMergingEvents}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-md ${
+                    selectedBookIds.length === 2
+                      ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-indigo-600 text-white ring-2 ring-emerald-400/60 shadow-emerald-500/25 animate-pulse'
+                      : 'bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10'
+                  }`}
+                  title={
+                    selectedBookIds.length === 2
+                      ? (language === 'ko' ? '선택한 2개 이벤트를 하나로 병합합니다' : 'Merge the 2 selected events into one')
+                      : (language === 'ko' ? '이벤트 병합 (2개 선택 시 병합 실행)' : 'Merge Events (select 2 events to merge)')
+                  }
+                >
+                  <GitMerge size={13} className={selectedBookIds.length === 2 ? "text-amber-300" : "text-emerald-400"} />
+                  <span>
+                    {language === 'ko' ? '이벤트 병합' : 'Merge Events'}
+                  </span>
+                  {selectedBookIds.length === 2 && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-400/30 text-emerald-200 font-mono">
+                      2
+                    </span>
+                  )}
+                </button>
+
+                {/* 📜 Merge History Ledger Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowHistoryModal(true)}
+                  className="px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-md bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 hover:border-amber-400/40"
+                  title={language === 'ko' ? '이벤트 병합 이력 장부 및 실행 취소 (History Ledger)' : 'Merge History Ledger & Undo'}
+                >
+                  <History size={13} className="text-amber-400" />
+                  <span>
+                    {language === 'ko' ? '이력 장부' : 'History'}
+                  </span>
+                  {activeMergeHistoryCount > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-400/20 text-amber-300 font-mono font-bold">
+                      {activeMergeHistoryCount}
+                    </span>
+                  )}
+                </button>
+
                 {/* 🔮 Persistent AI Narrative Mode Toggle in Toolbar */}
                 <button
                   type="button"
@@ -1555,6 +1754,12 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                             {book.chapters.length}개 챕터
                           </span>
                         )}
+                        {selectedBookIds.length === 2 && selectedBookIds.includes(book.id) && (
+                          <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-500/30 text-emerald-200 border border-emerald-400/50 flex items-center gap-1 shadow-sm animate-pulse">
+                            <GitMerge size={10} />
+                            <span>{language === 'ko' ? '병합 대상' : 'Merge Target'}</span>
+                          </span>
+                        )}
                       </div>
                       <button
                         onClick={(e) => handleDeleteBook(e, book.id)}
@@ -1611,6 +1816,20 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                       <Sparkles size={13} className={generatingBookIds.includes(book.id) ? "animate-spin text-amber-300" : "text-amber-400 group-hover/btn:rotate-12 transition-transform"} />
                       <span>{generatingBookIds.includes(book.id) ? (language === 'ko' ? '캡션 생성 중...' : 'Generating...') : (language === 'ko' ? 'AI 내러티브 (감성 캡션 생성)' : 'AI Narrative & Captions')}</span>
                     </button>
+
+                    {selectedBookIds.length === 2 && selectedBookIds.includes(book.id) && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenMergeModal();
+                        }}
+                        className="w-full py-1.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/30 cursor-pointer animate-pulse"
+                      >
+                        <GitMerge size={12} className="text-amber-300" />
+                        <span>{language === 'ko' ? '이벤트 병합 창 열기' : 'Open Merge Dialog'}</span>
+                      </button>
+                    )}
 
                     {/* Direct Quick Launch Action Buttons */}
                     <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/5">
@@ -3071,7 +3290,7 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
               </div>
 
               {/* Action Buttons */}
-              <div className="flex gap-2.5 pt-1">
+              <div className="flex flex-wrap gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -3081,11 +3300,29 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                     }
                     setNarrativeResult(null);
                   }}
-                  className="flex-1 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 cursor-pointer"
+                  className="flex-1 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 cursor-pointer min-w-[180px]"
                 >
                   <BookOpen size={15} />
                   <span>{language === 'ko' ? '3D 플립북에서 캡션 감상하기' : 'Open in 3D FlipBook'}</span>
                 </button>
+
+                {/* If this narrative result is from a merge, allow immediate Undo Merge right here */}
+                {(() => {
+                  const matchingHistory = mergeHistoryList.find(r => r.mergedBookId === narrativeResult.bookId && !r.isReverted);
+                  if (!matchingHistory) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => handleUndoMerge(matchingHistory)}
+                      disabled={isUndoingMerge}
+                      className="px-4 py-3 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer"
+                      title={language === 'ko' ? '방금 완료된 병합을 취소하고 원본 2개 이벤트로 복구' : 'Revert this merge and restore original events'}
+                    >
+                      <RotateCcw size={14} className={isUndoingMerge ? "animate-spin" : ""} />
+                      <span>{language === 'ko' ? '병합 취소 (Undo)' : 'Undo Merge'}</span>
+                    </button>
+                  );
+                })()}
 
                 <button
                   type="button"
@@ -3094,6 +3331,327 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                 >
                   {language === 'ko' ? '닫기' : 'Close'}
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 🔀 Manual Event Merging Modal */}
+      <AnimatePresence>
+        {showMergeModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-slate-900 border border-white/10 rounded-3xl max-w-2xl w-full p-6 md:p-8 shadow-2xl space-y-6 max-h-[90vh] flex flex-col"
+            >
+              <div className="flex justify-between items-center pb-4 border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-emerald-500 via-teal-500 to-indigo-600 text-white shadow-lg shadow-emerald-500/20">
+                    <GitMerge size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-white italic uppercase tracking-tight flex items-center gap-2">
+                      <span>{language === 'ko' ? '이벤트 수동 병합' : 'Merge Events'}</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase">
+                        AI Narrative
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {language === 'ko'
+                        ? '선택한 두 이벤트를 통합하고 AI가 하나의 유기적인 감성 스토리로 다시 합성합니다.'
+                        : 'Consolidate two generated events into one unified collection with AI narrative synthesis.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowMergeModal(false)}
+                  disabled={isMergingEvents}
+                  className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="overflow-y-auto space-y-6 pr-1 custom-scrollbar">
+                {/* 1. Event Selection & Comparison Cards */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-300 uppercase tracking-wider">
+                    <span>{language === 'ko' ? '병합할 두 이벤트 선택' : 'Select 2 Events to Merge'}</span>
+                    <span className="text-[10px] text-slate-400 font-normal">
+                      {language === 'ko' ? '(드롭다운으로 대상 변경 가능)' : '(Change targets via dropdown)'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative">
+                    {/* Event A Card */}
+                    {(() => {
+                      const bookA = photobooks.find(b => b.id === mergeEventAId);
+                      return (
+                        <div className="p-4 rounded-2xl bg-slate-950/80 border border-emerald-500/30 relative flex flex-col justify-between space-y-3 shadow-md">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                              Event A
+                            </span>
+                            <select
+                              value={mergeEventAId}
+                              onChange={(e) => {
+                                setMergeEventAId(e.target.value);
+                                const newA = photobooks.find(b => b.id === e.target.value);
+                                const curB = photobooks.find(b => b.id === mergeEventBId);
+                                if (newA && curB) {
+                                  setMergeCustomTitle(`${newA.title} & ${curB.title}`);
+                                }
+                              }}
+                              className="bg-slate-900 text-white text-xs rounded-lg px-2 py-1 border border-white/10 max-w-[160px] truncate focus:outline-none"
+                            >
+                              {photobooks.map(b => (
+                                <option key={b.id} value={b.id} disabled={b.id === mergeEventBId}>
+                                  {b.title}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {bookA ? (
+                            <div className="space-y-2">
+                              {bookA.coverImage && (
+                                <div className="h-24 rounded-xl overflow-hidden bg-slate-900 relative border border-white/10">
+                                  <img
+                                    src={getFallbackPhotoUrl(bookA.coverImage)}
+                                    alt=""
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                                  <span className="absolute bottom-1.5 left-2 text-[10px] text-amber-200 font-mono">
+                                    {bookA.totalPhotos} Photos • {bookA.pages.length} Pages
+                                  </span>
+                                </div>
+                              )}
+                              <div>
+                                <h4 className="text-sm font-bold text-white line-clamp-1">{bookA.title}</h4>
+                                {bookA.subtitle && (
+                                  <p className="text-[11px] text-slate-400 line-clamp-1 italic">{bookA.subtitle}</p>
+                                )}
+                              </div>
+                              <div className="text-[10px] font-mono text-slate-400 space-y-0.5 pt-1 border-t border-white/5">
+                                <div className="flex items-center gap-1 truncate">
+                                  <Calendar size={11} className="text-indigo-400 shrink-0" />
+                                  <span className="truncate">{bookA.dateRangeText || 'Date Range'}</span>
+                                </div>
+                                {bookA.locationSummary && (
+                                  <div className="flex items-center gap-1 truncate">
+                                    <MapPin size={11} className="text-rose-400 shrink-0" />
+                                    <span className="truncate">{bookA.locationSummary}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="py-6 text-center text-xs text-slate-500">
+                              {language === 'ko' ? '이벤트를 선택하세요' : 'Select an event'}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Event B Card */}
+                    {(() => {
+                      const bookB = photobooks.find(b => b.id === mergeEventBId);
+                      return (
+                        <div className="p-4 rounded-2xl bg-slate-950/80 border border-teal-500/30 relative flex flex-col justify-between space-y-3 shadow-md">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-teal-500/20 text-teal-300 font-bold">
+                              Event B
+                            </span>
+                            <select
+                              value={mergeEventBId}
+                              onChange={(e) => {
+                                setMergeEventBId(e.target.value);
+                                const curA = photobooks.find(b => b.id === mergeEventAId);
+                                const newB = photobooks.find(b => b.id === e.target.value);
+                                if (curA && newB) {
+                                  setMergeCustomTitle(`${curA.title} & ${newB.title}`);
+                                }
+                              }}
+                              className="bg-slate-900 text-white text-xs rounded-lg px-2 py-1 border border-white/10 max-w-[160px] truncate focus:outline-none"
+                            >
+                              {photobooks.map(b => (
+                                <option key={b.id} value={b.id} disabled={b.id === mergeEventAId}>
+                                  {b.title}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {bookB ? (
+                            <div className="space-y-2">
+                              {bookB.coverImage && (
+                                <div className="h-24 rounded-xl overflow-hidden bg-slate-900 relative border border-white/10">
+                                  <img
+                                    src={getFallbackPhotoUrl(bookB.coverImage)}
+                                    alt=""
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                                  <span className="absolute bottom-1.5 left-2 text-[10px] text-amber-200 font-mono">
+                                    {bookB.totalPhotos} Photos • {bookB.pages.length} Pages
+                                  </span>
+                                </div>
+                              )}
+                              <div>
+                                <h4 className="text-sm font-bold text-white line-clamp-1">{bookB.title}</h4>
+                                {bookB.subtitle && (
+                                  <p className="text-[11px] text-slate-400 line-clamp-1 italic">{bookB.subtitle}</p>
+                                )}
+                              </div>
+                              <div className="text-[10px] font-mono text-slate-400 space-y-0.5 pt-1 border-t border-white/5">
+                                <div className="flex items-center gap-1 truncate">
+                                  <Calendar size={11} className="text-indigo-400 shrink-0" />
+                                  <span className="truncate">{bookB.dateRangeText || 'Date Range'}</span>
+                                </div>
+                                {bookB.locationSummary && (
+                                  <div className="flex items-center gap-1 truncate">
+                                    <MapPin size={11} className="text-rose-400 shrink-0" />
+                                    <span className="truncate">{bookB.locationSummary}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="py-6 text-center text-xs text-slate-500">
+                              {language === 'ko' ? '이벤트를 선택하세요' : 'Select an event'}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* 2. Merged Result Title & Options */}
+                <div className="space-y-4 pt-2 border-t border-white/10">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                      <span>{language === 'ko' ? '통합 이벤트 포토북 제목' : 'Merged Event Title'}</span>
+                      <span className="text-[10px] text-slate-500 font-normal">
+                        {language === 'ko' ? '(수정 가능, 비워두면 AI 자동 작명)' : '(Editable, blank for auto AI title)'}
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={mergeCustomTitle}
+                      onChange={(e) => setMergeCustomTitle(e.target.value)}
+                      placeholder={language === 'ko' ? '예: 제주 여행 & 해변의 오후 통합' : 'e.g., Vacation & Beach Afternoon Combined'}
+                      className="w-full px-4 py-2.5 bg-slate-950 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-emerald-500 transition-colors"
+                    />
+                  </div>
+
+                  {/* 3. Story Tone for Merged Event */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-amber-400" />
+                      <span>{language === 'ko' ? '통합 감성 스토리텔링 톤' : 'Merged Storytelling Tone'}</span>
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {STORY_TONES.slice(0, 4).map((tone) => {
+                        const isSelected = mergeSelectedTone === tone.id;
+                        return (
+                          <button
+                            key={tone.id}
+                            type="button"
+                            onClick={() => setMergeSelectedTone(tone.id)}
+                            className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                              isSelected
+                                ? 'bg-emerald-950/60 border-emerald-500 text-white shadow-md shadow-emerald-500/20 ring-1 ring-emerald-500/50'
+                                : 'bg-slate-950/70 border-white/5 hover:border-white/20 text-slate-300'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold">{tone.labelKo}</span>
+                              {isSelected && <CheckCircle2 size={13} className="text-emerald-400" />}
+                            </div>
+                            <span className="text-[9px] text-slate-400 truncate mt-1">{tone.descKo}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 4. AI Story Synthesis Toggle */}
+                  <div className="p-3.5 rounded-2xl bg-emerald-950/20 border border-emerald-500/30 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-300 shrink-0">
+                        <Sparkles size={16} />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-white">
+                          {language === 'ko' ? 'Gemini AI 이벤트 요약 및 감성 캡션 자동 합성' : 'Synthesize AI Event Summary & Captions'}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {language === 'ko'
+                            ? '두 이벤트의 사진 시각 정보와 위치, 시간을 결합하여 하나의 매끄러운 서사로 재구성합니다.'
+                            : 'Combines photo context, locations, and chapters into one coherent story narrative.'}
+                        </div>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={enableAiSummaryOnMerge}
+                      onChange={(e) => setEnableAiSummaryOnMerge(e.target.checked)}
+                      className="w-5 h-5 accent-emerald-500 rounded cursor-pointer shrink-0 ml-3"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="pt-4 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+                <div className="text-xs text-slate-400 font-mono">
+                  {mergeStatus ? (
+                    <span className="text-amber-300 flex items-center gap-1.5 animate-pulse">
+                      <Sparkles size={13} className="animate-spin" />
+                      <span>{mergeStatus}</span>
+                    </span>
+                  ) : (
+                    <span>
+                      {language === 'ko' ? '병합 시 두 원본 이벤트는 하나로 합쳐집니다' : 'Source events will be consolidated into the new book'}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2.5 self-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowMergeModal(false)}
+                    disabled={isMergingEvents}
+                    className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition-all cursor-pointer"
+                  >
+                    {language === 'ko' ? '취소' : 'Cancel'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExecuteMerge}
+                    disabled={isMergingEvents || !mergeEventAId || !mergeEventBId || mergeEventAId === mergeEventBId}
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 disabled:opacity-50 text-white text-xs font-bold transition-all shadow-lg shadow-emerald-600/30 flex items-center gap-2 cursor-pointer"
+                  >
+                    {isMergingEvents ? (
+                      <Sparkles size={14} className="animate-spin text-amber-200" />
+                    ) : (
+                      <GitMerge size={14} />
+                    )}
+                    <span>
+                      {isMergingEvents
+                        ? (language === 'ko' ? '이벤트 병합 중...' : 'Merging Events...')
+                        : (language === 'ko' ? '이벤트 병합 실행' : 'Merge Events')}
+                    </span>
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -3205,6 +3763,299 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* 📜 Merge History Ledger Modal */}
+      <AnimatePresence>
+        {showHistoryModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-slate-900 border border-white/10 rounded-3xl max-w-2xl w-full p-6 md:p-8 shadow-2xl space-y-6 max-h-[85vh] flex flex-col"
+            >
+              <div className="flex justify-between items-center pb-4 border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-indigo-600 text-white shadow-lg shadow-amber-500/20">
+                    <History size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-white italic uppercase tracking-tight flex items-center gap-2">
+                      <span>{language === 'ko' ? '이벤트 병합 이력 장부' : 'Merge History Ledger'}</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase">
+                        {activeMergeHistoryCount} Active
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {language === 'ko'
+                        ? '최근 병합된 이벤트 내역을 확인하고, 실수로 병합된 이벤트를 즉시 실행 취소(Undo Merge)하여 원본 2개 이벤트로 복원할 수 있습니다.'
+                        : 'Review recent merge operations and immediately undo accidental merges to restore original events.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowHistoryModal(false)}
+                  className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* History List */}
+              <div className="overflow-y-auto space-y-3 pr-1 custom-scrollbar flex-1">
+                {mergeHistoryList.length === 0 ? (
+                  <div className="py-16 text-center rounded-2xl bg-slate-950/50 border border-white/5 space-y-3">
+                    <History size={40} className="mx-auto text-slate-700" />
+                    <p className="text-sm font-semibold text-slate-400">
+                      {language === 'ko' ? '아직 기록된 이벤트 병합 이력이 없습니다.' : 'No merge history records found.'}
+                    </p>
+                    <p className="text-xs text-slate-600 max-w-sm mx-auto">
+                      {language === 'ko'
+                        ? 'Photobook 탭에서 2개의 이벤트를 선택하고 "이벤트 병합"을 실행하면 이곳에 안전하게 기록됩니다.'
+                        : 'When you merge two events in the Photobook tab, the operation will be recorded here.'}
+                    </p>
+                  </div>
+                ) : (
+                  mergeHistoryList.map((record) => {
+                    const isReverted = !!record.isReverted;
+                    const dateFormatted = new Date(record.timestamp).toLocaleString(
+                      language === 'ko' ? 'ko-KR' : 'en-US',
+                      {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      }
+                    );
+
+                    return (
+                      <div
+                        key={record.id}
+                        className={`p-4 rounded-2xl border transition-all flex flex-col gap-3 ${
+                          isReverted
+                            ? 'bg-slate-950/40 border-white/5 opacity-60'
+                            : 'bg-slate-950/80 border-white/10 hover:border-amber-400/40 shadow-md'
+                        }`}
+                      >
+                        {/* Record Top Bar */}
+                        <div className="flex items-center justify-between text-xs font-mono">
+                          <span className="flex items-center gap-1.5 text-slate-400">
+                            <Clock size={12} className="text-amber-400" />
+                            <span>{dateFormatted}</span>
+                          </span>
+                          {isReverted ? (
+                            <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 text-[10px] font-bold border border-white/5 flex items-center gap-1">
+                              <CheckCircle2 size={11} className="text-slate-400" />
+                              <span>{language === 'ko' ? '되돌림 완료 (Reverted)' : 'Reverted'}</span>
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/30 flex items-center gap-1">
+                              <GitMerge size={11} />
+                              <span>{language === 'ko' ? '병합 완료됨' : 'Merged'}</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Merged Transformation Flow */}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center bg-white/5 p-3 rounded-xl border border-white/5">
+                          {/* Left: Original 2 Events */}
+                          <div className="sm:col-span-5 space-y-1.5">
+                            <span className="text-[10px] uppercase font-mono text-slate-400 font-bold block">
+                              {language === 'ko' ? '원본 2개 이벤트' : 'Original 2 Events'}
+                            </span>
+                            <div className="text-xs text-slate-200 space-y-1">
+                              <div className="flex items-center gap-1.5 truncate" title={record.originalEvents[0]?.title}>
+                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                                <span className="font-semibold truncate">{record.originalEvents[0]?.title || 'Event A'}</span>
+                                <span className="text-[10px] text-slate-400 font-mono shrink-0">({record.originalEvents[0]?.totalPhotos}장)</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 truncate" title={record.originalEvents[1]?.title}>
+                                <span className="w-1.5 h-1.5 rounded-full bg-teal-400 shrink-0" />
+                                <span className="font-semibold truncate">{record.originalEvents[1]?.title || 'Event B'}</span>
+                                <span className="text-[10px] text-slate-400 font-mono shrink-0">({record.originalEvents[1]?.totalPhotos}장)</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Center Arrow */}
+                          <div className="sm:col-span-2 flex items-center justify-center">
+                            <div className="p-1.5 rounded-full bg-white/10 text-amber-300">
+                              <ArrowRight size={14} className="hidden sm:block" />
+                              <ChevronDown size={14} className="sm:hidden" />
+                            </div>
+                          </div>
+
+                          {/* Right: Merged Event */}
+                          <div className="sm:col-span-5 space-y-1">
+                            <span className="text-[10px] uppercase font-mono text-emerald-400 font-bold block">
+                              {language === 'ko' ? '통합 포토북' : 'Merged Photobook'}
+                            </span>
+                            <div className="text-xs font-bold text-white truncate" title={record.mergedBookTitle}>
+                              "{record.mergedBookTitle}"
+                            </div>
+                            <div className="text-[10px] font-mono text-slate-400">
+                              {record.photoCount} Photos • Tone: {record.storyTone || 'lyrical'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Action Row */}
+                        <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                          <span className="text-[11px] text-slate-500 italic truncate max-w-[60%]">
+                            {record.summaryTitle ? `"${record.summaryTitle}"` : ''}
+                          </span>
+
+                          <div>
+                            {!isReverted ? (
+                              <button
+                                type="button"
+                                onClick={() => handleUndoMerge(record)}
+                                disabled={isUndoingMerge}
+                                className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-amber-500/20 cursor-pointer"
+                                title={language === 'ko' ? '이 병합 작업을 취소하고 원본 2개 이벤트로 복원합니다' : 'Undo this merge and restore original 2 events'}
+                              >
+                                <RotateCcw size={12} className={isUndoingMerge ? "animate-spin" : ""} />
+                                <span>{language === 'ko' ? '병합 실행 취소 (Undo Merge)' : 'Undo Merge'}</span>
+                              </button>
+                            ) : (
+                              <span className="text-xs font-semibold text-emerald-400/80 flex items-center gap-1">
+                                <Check size={13} />
+                                <span>{language === 'ko' ? '복원 완료' : 'Restored'}</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="pt-4 border-t border-white/10 flex items-center justify-between shrink-0">
+                {mergeHistoryList.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm(language === 'ko' ? '병합 이력 장부를 초기화하시겠습니까?' : 'Clear all merge history records?')) {
+                        clearMergeHistory();
+                        setMergeHistoryList([]);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Trash2 size={12} />
+                    <span>{language === 'ko' ? '이력 장부 비우기' : 'Clear History'}</span>
+                  </button>
+                )}
+
+                <div className="ml-auto">
+                  <button
+                    type="button"
+                    onClick={() => setShowHistoryModal(false)}
+                    className="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold transition-all cursor-pointer"
+                  >
+                    {language === 'ko' ? '닫기' : 'Close'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ⚡ Immediate Floating Undo Toast */}
+      <AnimatePresence>
+        {undoToast && undoToast.visible && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ duration: 0.25 }}
+            className="fixed bottom-6 right-6 z-50 max-w-md w-full bg-slate-900/95 backdrop-blur-xl border border-amber-500/40 rounded-2xl p-4 shadow-2xl shadow-black/80 flex flex-col gap-3 text-white"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  <History size={18} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                    <span>{language === 'ko' ? '이벤트 병합 완료' : 'Events Merged Successfully'}</span>
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-200 font-mono">
+                      NEW
+                    </span>
+                  </h4>
+                  <p className="text-xs text-slate-200 font-medium truncate max-w-[260px] mt-0.5">
+                    "{undoToast.record.mergedBookTitle}"
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUndoToast(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-snug">
+              {language === 'ko'
+                ? '실수로 병합하셨나요? 아래 버튼을 누르면 즉시 원본 2개 이벤트로 복원됩니다.'
+                : 'Accidental merge? You can revert immediately back to the two original events.'}
+            </p>
+
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowHistoryModal(true)}
+                className="text-[11px] text-slate-400 hover:text-white font-mono flex items-center gap-1 cursor-pointer"
+              >
+                <History size={12} />
+                <span>{language === 'ko' ? '이력 장부 열기' : 'History Ledger'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleUndoMerge(undoToast.record)}
+                disabled={isUndoingMerge}
+                className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/30 cursor-pointer transition-all"
+              >
+                <RotateCcw size={13} className={isUndoingMerge ? "animate-spin" : ""} />
+                <span>{language === 'ko' ? '병합 실행 취소 (Undo)' : 'Undo Merge'}</span>
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 🔔 Revert Confirmation Floating Alert */}
+      <AnimatePresence>
+        {undoStatusMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-6 left-1/2 -translate-x-1/2 z-50 max-w-lg w-full bg-slate-900/95 backdrop-blur-xl border border-emerald-500/50 rounded-2xl px-5 py-3 shadow-2xl flex items-center justify-between gap-3 text-white"
+          >
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 size={18} className="text-emerald-400 shrink-0" />
+              <p className="text-xs text-slate-200 leading-snug font-medium">
+                {undoStatusMessage}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setUndoStatusMessage(null)}
+              className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer shrink-0"
+            >
+              <X size={15} />
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
       </div>

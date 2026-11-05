@@ -100,6 +100,8 @@ import {
   ExternalLink,
   BookOpen,
   HelpCircle,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -134,6 +136,8 @@ import { EnhancementTab } from "./components/tabs/EnhancementTab";
 import { PrintTab } from "./components/tabs/PrintTab";
 import { SyncTab } from "./components/tabs/SyncTab";
 import { BurstTab } from "./components/tabs/BurstTab";
+import { SettingsTab } from "./components/tabs/SettingsTab";
+import { fileWatcherService } from "./services/fileWatcherService";
 import { idleSweeper } from "./services/idleSweeper";
 import { DiagnosticsDashboard } from "./components/DiagnosticsDashboard";
 import { MotionCreatorModal } from "./components/MotionCreatorModal";
@@ -196,6 +200,12 @@ export default function App() {
         id: "library",
         icon: ImageIcon,
         label: language === "ko" ? "사진 보관함" : "Photo Library",
+        isAi: false,
+      },
+      {
+        id: "settings",
+        icon: Settings,
+        label: language === "ko" ? "환경설정" : "Settings",
         isAi: false,
       },
     ];
@@ -819,7 +829,14 @@ export default function App() {
     arch: string;
     desktopCitizen: boolean;
   } | null>(null);
-  const [isWatcherEnabled, setIsWatcherEnabled] = useState(false);
+  const [isWatcherEnabled, setIsWatcherEnabled] = useState(() => fileWatcherService.isEnabled());
+
+  useEffect(() => {
+    const unsub = fileWatcherService.subscribe((status) => {
+      setIsWatcherEnabled(status.isEnabled);
+    });
+    return () => unsub();
+  }, []);
 
   const [airGappedMode, setAirGappedMode] = useState(false);
   const [useQuantization, setUseQuantization] = useState(true);
@@ -897,17 +914,12 @@ export default function App() {
       // 1. Core DB Init and optional heal
       await initTauriDb();
 
-      // 2. Real-time Watcher (default: true)
-      const autowatcher = localStorage.getItem('snapclean_startup_autowatcher') !== 'false';
-      if (autowatcher && SystemAPI.isTauri() && watchPaths.length > 0) {
-        watchPaths.forEach(async (path) => {
-          try {
-            await SystemAPI.startWatcher(path);
-            console.log(`[Startup] Watcher started for: ${path}`);
-          } catch (err) {
-            console.error(`[Startup] Failed to start watcher for ${path}:`, err);
-          }
-        });
+      // 2. Real-time File Watcher Service (persists state in localStorage & initializes on app start)
+      try {
+        await fileWatcherService.init();
+        setIsWatcherEnabled(fileWatcherService.isEnabled());
+      } catch (watcherErr) {
+        console.error("[Startup] Failed to initialize file watcher service:", watcherErr);
       }
 
       // 3. Auto-Cleanup / Maintenance (default: false)
@@ -2614,6 +2626,16 @@ export default function App() {
                 addNotification={addNotification}
               />
             )}
+
+            {activeTab === "settings" && (
+              <SettingsTab
+                addNotification={addNotification}
+                quickScanMode={quickScanMode}
+                setQuickScanMode={setQuickScanMode}
+                scanFormats={scanFormats}
+                setScanFormats={setScanFormats}
+              />
+            )}
           </div>
         </main>
 
@@ -2750,9 +2772,92 @@ export default function App() {
                   {/* Sub text */}
                   <p className="text-xs text-slate-400 leading-relaxed">
                     {language === "ko"
-                      ? "스캔 모드 및 탐색할 대상 파일 확장자들을 지정하세요. 선택한 프리셋과 확장자들만 분석 범위에 매핑되어 동작합니다."
-                      : "Configure quick scan modes and file format filters. Selected options dictate scan analysis depth."}
+                      ? "백그라운드 파일 감시 및 스캔 모드, 탐색할 대상 파일 확장자들을 지정하세요."
+                      : "Configure background scanning, quick modes, and target file formats."}
                   </p>
+
+                {/* Global Enable Background Scanning Toggle */}
+                <div className="flex flex-col gap-3 bg-slate-950/70 p-4 rounded-2xl border border-white/10 shadow-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Eye size={16} className={isWatcherEnabled ? "text-emerald-400 animate-pulse" : "text-slate-500"} />
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-100">
+                        {language === "ko" ? "백그라운드 자동 스캔 (File Watcher)" : "Enable Background Scanning"}
+                      </span>
+                    </div>
+                    <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border shadow-sm ${
+                      isWatcherEnabled
+                        ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 shadow-emerald-500/10"
+                        : "bg-slate-800 border-slate-700 text-slate-400"
+                    }`}>
+                      {isWatcherEnabled
+                        ? (language === "ko" ? "활성 (실시간 감시)" : "ACTIVE")
+                        : (language === "ko" ? "비활성" : "DISABLED")}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900 border border-slate-800 shadow-inner">
+                    <div className="flex flex-col gap-0.5 pr-2">
+                      <span className="text-xs font-bold text-slate-100">
+                        {language === "ko" ? "백그라운드 자동 감시 토글" : "Background Watcher Switch"}
+                      </span>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        {isWatcherEnabled
+                          ? (language === "ko" ? "지정 폴더의 파일 변경을 실시간 감지하며 앱 시작 시 자동 기동됩니다." : "Monitors folders in background and initializes watcher on startup.")
+                          : (language === "ko" ? "백그라운드 감시가 정지되었습니다. 수동 스캔 시에만 동작합니다." : "Background watcher stopped. Scanning requires manual trigger.")}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={isWatcherEnabled}
+                      onClick={async () => {
+                        const next = !isWatcherEnabled;
+                        await fileWatcherService.setEnabled(next);
+                        addNotification(
+                          language === "ko"
+                            ? (next ? "백그라운드 스캔 활성화됨" : "백그라운드 스캔 비활성화됨")
+                            : (next ? "Background Scanning Enabled" : "Background Scanning Disabled"),
+                          language === "ko"
+                            ? (next ? "파일 감시자 서비스가 시작되었으며 앱 시작 시 자동으로 기동됩니다." : "파일 감시자 서비스가 중지되었습니다.")
+                            : (next ? "File watcher service started and will initialize automatically on application start." : "File watcher service stopped."),
+                          next ? "success" : "info"
+                        );
+                      }}
+                      className={`relative inline-flex h-8 w-16 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-all duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-400/50 ${
+                        isWatcherEnabled
+                          ? "bg-emerald-500 shadow-lg shadow-emerald-500/30 ring-2 ring-emerald-400/30"
+                          : "bg-slate-700 shadow-inner"
+                      }`}
+                    >
+                      <span className="sr-only">Toggle Background Scanning</span>
+                      <span
+                        className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-slate-950 shadow-md ring-1 ring-white/20 transition-all duration-300 ease-in-out flex items-center justify-center text-xs font-black ${
+                          isWatcherEnabled ? "translate-x-8 text-emerald-400" : "translate-x-0 text-slate-400"
+                        }`}
+                      >
+                        {isWatcherEnabled ? "ON" : "OFF"}
+                      </span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[10px] text-slate-400">
+                      {language === "ko" ? "상세 감시 폴더 관리:" : "Detailed Watch Folders:"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowScanSettings(false);
+                        setActiveTab("settings");
+                      }}
+                      className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold underline transition-colors cursor-pointer"
+                    >
+                      {language === "ko" ? "환경설정(Settings) 탭 열기 →" : "Open Settings Tab →"}
+                    </button>
+                  </div>
+                </div>
 
                 {/* Quick Scan Preset Selection Section */}
                 <div className="flex flex-col gap-3 bg-slate-950/70 p-4 rounded-2xl border border-white/10 shadow-lg">
@@ -4005,9 +4110,20 @@ export default function App() {
                       shortcut: "L",
                     },
                     {
-                      label: "Toggle Watcher",
-                      icon: Activity,
-                      action: () => setIsWatcherEnabled(!isWatcherEnabled),
+                      label: language === "ko" ? "환경설정 열기" : "Open Settings",
+                      icon: Settings,
+                      action: () => {
+                        setActiveTab("settings");
+                        setShowCommandPalette(false);
+                      },
+                      shortcut: ",",
+                    },
+                    {
+                      label: language === "ko" ? "백그라운드 스캔 토글" : "Toggle Background Scanning",
+                      icon: isWatcherEnabled ? Eye : EyeOff,
+                      action: async () => {
+                        await fileWatcherService.setEnabled(!isWatcherEnabled);
+                      },
                     },
                   ]
                     .filter((item) =>
@@ -4195,6 +4311,11 @@ export default function App() {
               id: "library",
               icon: ImageIcon,
               label: language === "ko" ? "보관함" : "Library",
+            },
+            {
+              id: "settings",
+              icon: Settings,
+              label: language === "ko" ? "설정" : "Settings",
             },
           ].map((tab) => {
             const isActive = activeTab === tab.id;

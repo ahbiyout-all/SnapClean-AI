@@ -21,16 +21,42 @@ export interface AppVersionInfo {
 export const APP_VERSION_INFO: AppVersionInfo = {
   version: "2.5.0",
   appName: "SnapClean AI",
-  buildNumber: "20261101.0100",
-  buildDate: "2026-11-01",
+  buildNumber: "20261102.1032",
+  buildDate: "2026-11-02",
   channel: "stable",
-  engineVersion: "Dexie+FastView-v2.5.0+SmartDuplicateAI+GitHubReleasesAutoUpdate",
+  engineVersion: "Dexie+FastView-v2.6.0+FilenameInference+NatureFilter",
   patchNotes: [
+    {
+      version: "2.6.0",
+      releaseDate: "2026-11-01",
+      theme: "보관함 Nature / Landscape / People 빠른 필터 & 카테고리별 요약 시각화 & 파일명 유추 중복 감지 엔진",
+      isLatest: true,
+      features: [
+        "환경설정(Settings Tab) 글로벌 'Enable Background Scanning (백그라운드 자동 스캔)' 토글 탑재: localStorage(snapclean_enable_background_scanning) 영구 상태 보존, 앱 시작 시 파일 감시자 서비스(File Watcher Service) 자동 초기화 및 실시간 파일시스템 모니터링 기동 연동",
+        "보관함(Library Tab) 카테고리 요약 시각화(CategorySummaryChart) 탑재: Recharts 기반 파이프 차트 및 요약 카운트 목록 제공",
+        "보관함 다중 선택 일괄 작업 헤더 바(Bulk Action Header Bar) '공유(Share)' 기능 추가: 선택한 사진들에 대해 유효기간(1시간/24시간/7일/1회 열람 파기) 설정이 가능한 임시 보안 링크(Temporary Secure Link) 및 P2P Direct Tunnel, QR 코드를 지원하는 CollabShareModal 완전 연동",
+        "보관함(Library Tab) 다중 선택 일괄 작업 헤더 바(Bulk-Action Header Bar) 탑재: 사진 선택 시 자동 노출되어 '앨범으로 이동(Move to Album)', '선택 항목 내보내기(Export Selected - ZIP/CSV/경로 복사)', '공유(Share)', '일괄 삭제(Bulk Delete)' 원클릭 지원",
+        "보관함(Library Tab) Framer Motion 기반 지연 순차(Staggered) 페이드인 애니메이션 구현: 필터/정렬 변경 시 사진 그리드, 리스트, 상세 테이블 뷰에 부드러운 스태거 진입 효과 제공",
+        "보관함(Library Tab) 헤더 'Select by Category' 필터 드롭다운 탑재: Nature, People, Travel, Work, Abstract, Food, Architecture, Documents 등 선택 시 selectedCategories 업데이트 및 filteredLibraryPhotos 즉시 반영",
+        "보관함 내 원클릭 '자연 (Nature)', '풍경 (Landscape)', '인물 (People)', '여행 (Travel)', '도시 (Urban)', '업무 (Work)' 숏컷 필터 버튼 신설: 클릭 시 해당 테마 카테고리를 동시 반영하여 사진 즉시 분리 표시",
+        "보관함 '카테고리별 선택 (Select by Category)' 모달 팝오버 탑재: AI 감지 카테고리(자연, 인물, 음식 등)별 사진을 원클릭으로 일괄 하이라이트/다중 선택",
+        "보관함(Library Tab) 헤더 'Sort By' 정렬 드롭다운 탑재: 촬영 날짜, 파일 크기, 파일명 등 6대 지표별 오름차순/내림차순 정렬 컨트롤 지원",
+        "파일명 지능형 유추 중복 감지 엔진(Filename Deductive Inference Engine): OS 복사본, 메신저 전송본, 촬영일시 시그니처, 편집기 접미사, 카메라 모드 5대 패턴 지능형 유추",
+        "D3.js 기반 중복 폴더 히트맵(FolderDuplicateHeatmap): 저장 공간 낭비 핫스팟 시각화 및 인터랙티브 필터링",
+      ],
+      improvements: [
+        "자연 및 풍경 테마 사진 실시간 건수 배지 및 에메랄드 링 액티브 상태 표시",
+        "대소문자 무관 카테고리/태그 정규화 필터링 파이프라인 완비",
+      ],
+      fixes: [
+        "다중 카테고리 필터 선택 시 활성 필터 칩(Active Filter Chips) 로컬라이제이션 정합성 개선",
+      ],
+    },
     {
       version: "2.5.0",
       releaseDate: "2026-11-01",
       theme: "GitHub Releases 실시간 자동 업데이트 & 스마트 AI 사진 자동 선별 시스템 완공",
-      isLatest: true,
+      isLatest: false,
       features: [
         "개발자 AhBiYout (AhBiYout-all) GitHub Releases 기반 실시간 자동 업데이트 체크 및 팝업 모달 탑재",
         "초점(Blur) · 노출(Exposure) · 구도(Composition) 3축 AI 종합 평가 기반 '스마트 AI 중복 사진 자동 선택' 엔진 구현",

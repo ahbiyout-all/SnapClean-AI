@@ -21,6 +21,7 @@ export interface PhotoRecord {
   aiScore?: number;        // Alias for aestheticScore used in some hooks
   category?: string;       // Nature, People, etc.
   tags?: string[];         // ML detected concepts
+  aiTags?: string[];       // Alias for tags
   detectedFaces?: number;  // Count of faces detected
   isEnhanced?: boolean;    // Whether AI upscaling was applied
   enhancementType?: string; // SuperRes, ColorFix, etc.
