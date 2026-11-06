@@ -47,7 +47,11 @@ import {
   HelpCircle,
   GitMerge,
   RotateCcw,
-  Undo2
+  Undo2,
+  ArrowUp,
+  ArrowDown,
+  Save,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, PhotoRecord } from '../../services/db';
@@ -257,6 +261,254 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
       console.error('[Undo Merge Error]:', err);
     } finally {
       setIsUndoingMerge(false);
+    }
+  };
+
+  // Smart Story Editor States & Handlers
+  const [showStoryEditorModal, setShowStoryEditorModal] = useState(false);
+  const [editorBookId, setEditorBookId] = useState<string>('');
+  const [editorDraftBook, setEditorDraftBook] = useState<PhotobookRecord | null>(null);
+  const [editorActiveTab, setEditorActiveTab] = useState<'chapters' | 'captions'>('chapters');
+  const [isSavingStoryEdits, setIsSavingStoryEdits] = useState(false);
+  const [editorToastMsg, setEditorToastMsg] = useState<string | null>(null);
+  const [editorFilterChapter, setEditorFilterChapter] = useState<string>('all');
+
+  const handleOpenStoryEditor = (bookId?: string) => {
+    const targetId = bookId || selectedBookIds[0] || (photobooks[0]?.id || '');
+    const foundBook = photobooks.find(b => b.id === targetId) || photobooks[0];
+    if (!foundBook) return;
+
+    setEditorBookId(foundBook.id);
+    const cloned = JSON.parse(JSON.stringify(foundBook)) as PhotobookRecord;
+
+    if (!cloned.chapters || cloned.chapters.length === 0) {
+      const extractedTitles = Array.from(new Set(cloned.pages.map(p => p.chapterTitle).filter(Boolean))) as string[];
+      if (extractedTitles.length > 0) {
+        cloned.chapters = extractedTitles.map((t, idx) => ({
+          id: `chap_${idx + 1}_${Date.now()}`,
+          title: t,
+          subtitle: `Chapter ${idx + 1}`,
+          prologue: `Story for ${t}`,
+          photoCount: cloned.pages.filter(p => p.chapterTitle === t).flatMap(p => p.photos).length
+        }));
+      } else {
+        cloned.chapters = [{
+          id: `chap_1_${Date.now()}`,
+          title: cloned.title || 'Main Chapter',
+          subtitle: 'Story Collection',
+          prologue: cloned.subtitle || 'Memories and stories captured in this book',
+          photoCount: cloned.totalPhotos
+        }];
+      }
+    }
+
+    setEditorDraftBook(cloned);
+    setEditorActiveTab('chapters');
+    setEditorFilterChapter('all');
+    setShowStoryEditorModal(true);
+  };
+
+  const handleSwitchEditorBook = (targetId: string) => {
+    const found = photobooks.find(b => b.id === targetId);
+    if (!found) return;
+    setEditorBookId(found.id);
+    const cloned = JSON.parse(JSON.stringify(found)) as PhotobookRecord;
+    if (!cloned.chapters || cloned.chapters.length === 0) {
+      const extractedTitles = Array.from(new Set(cloned.pages.map(p => p.chapterTitle).filter(Boolean))) as string[];
+      if (extractedTitles.length > 0) {
+        cloned.chapters = extractedTitles.map((t, idx) => ({
+          id: `chap_${idx + 1}_${Date.now()}`,
+          title: t,
+          subtitle: `Chapter ${idx + 1}`,
+          prologue: `Story for ${t}`,
+          photoCount: cloned.pages.filter(p => p.chapterTitle === t).flatMap(p => p.photos).length
+        }));
+      } else {
+        cloned.chapters = [{
+          id: `chap_1_${Date.now()}`,
+          title: cloned.title || 'Main Chapter',
+          subtitle: 'Story Collection',
+          prologue: cloned.subtitle || 'Memories and stories captured in this book',
+          photoCount: cloned.totalPhotos
+        }];
+      }
+    }
+    setEditorDraftBook(cloned);
+    setEditorFilterChapter('all');
+  };
+
+  const handleMoveChapter = (fromIndex: number, toIndex: number) => {
+    if (!editorDraftBook || !editorDraftBook.chapters) return;
+    if (toIndex < 0 || toIndex >= editorDraftBook.chapters.length) return;
+
+    const newChapters = [...editorDraftBook.chapters];
+    const [moved] = newChapters.splice(fromIndex, 1);
+    newChapters.splice(toIndex, 0, moved);
+
+    const coverPages = editorDraftBook.pages.filter(p => p.layout === 'cover');
+    const backCoverPages = editorDraftBook.pages.filter(p => p.layout === 'back-cover');
+    const contentPages = editorDraftBook.pages.filter(p => p.layout !== 'cover' && p.layout !== 'back-cover');
+
+    const chapterOrderMap = new Map<string, number>();
+    newChapters.forEach((ch, idx) => {
+      chapterOrderMap.set(ch.title, idx);
+    });
+
+    const sortedContentPages = [...contentPages].sort((a, b) => {
+      const orderA = a.chapterTitle && chapterOrderMap.has(a.chapterTitle) ? chapterOrderMap.get(a.chapterTitle)! : 999;
+      const orderB = b.chapterTitle && chapterOrderMap.has(b.chapterTitle) ? chapterOrderMap.get(b.chapterTitle)! : 999;
+      if (orderA !== orderB) return orderA - orderB;
+      return a.pageNumber - b.pageNumber;
+    });
+
+    let pNum = 1;
+    sortedContentPages.forEach(p => {
+      p.pageNumber = pNum++;
+    });
+    if (backCoverPages.length > 0) {
+      backCoverPages[0].pageNumber = pNum;
+    }
+
+    const newPages = [...coverPages, ...sortedContentPages, ...backCoverPages];
+
+    setEditorDraftBook({
+      ...editorDraftBook,
+      chapters: newChapters,
+      pages: newPages,
+      updatedAt: Date.now()
+    });
+  };
+
+  const handleUpdateChapterField = (chapIdx: number, field: keyof PhotobookChapter, value: string) => {
+    if (!editorDraftBook || !editorDraftBook.chapters) return;
+    const oldTitle = editorDraftBook.chapters[chapIdx].title;
+    const newChapters = [...editorDraftBook.chapters];
+    newChapters[chapIdx] = {
+      ...newChapters[chapIdx],
+      [field]: value
+    };
+
+    let newPages = editorDraftBook.pages;
+    if (field === 'title' && oldTitle && value !== oldTitle) {
+      newPages = editorDraftBook.pages.map(page => {
+        if (page.chapterTitle === oldTitle) {
+          return { ...page, chapterTitle: value };
+        }
+        return page;
+      });
+    }
+
+    setEditorDraftBook({
+      ...editorDraftBook,
+      chapters: newChapters,
+      pages: newPages,
+      updatedAt: Date.now()
+    });
+  };
+
+  const handleAddChapter = () => {
+    if (!editorDraftBook) return;
+    const currentChaps = editorDraftBook.chapters || [];
+    const newChap: PhotobookChapter = {
+      id: `chap_${currentChaps.length + 1}_${Date.now()}`,
+      title: language === 'ko' ? `${currentChaps.length + 1}장. 새로운 이야기` : `Chapter ${currentChaps.length + 1}`,
+      subtitle: language === 'ko' ? '새로운 추억의 기록' : 'New Memories',
+      prologue: language === 'ko' ? '마음에 남겨두고 싶은 아름다운 찰나' : 'A cherished moment in time',
+      photoCount: 0
+    };
+    setEditorDraftBook({
+      ...editorDraftBook,
+      chapters: [...currentChaps, newChap],
+      updatedAt: Date.now()
+    });
+  };
+
+  const handleDeleteChapter = (chapIdx: number) => {
+    if (!editorDraftBook || !editorDraftBook.chapters) return;
+    if (editorDraftBook.chapters.length <= 1) {
+      alert(language === 'ko' ? '최소 1개의 챕터가 필요합니다.' : 'At least 1 chapter is required.');
+      return;
+    }
+    const newChaps = editorDraftBook.chapters.filter((_, idx) => idx !== chapIdx);
+    setEditorDraftBook({
+      ...editorDraftBook,
+      chapters: newChaps,
+      updatedAt: Date.now()
+    });
+  };
+
+  const handleUpdatePhotoCaption = (pageId: string, photoIdx: number, newCaption: string) => {
+    if (!editorDraftBook) return;
+    const newPages = editorDraftBook.pages.map(page => {
+      if (page.id === pageId) {
+        const newPhotos = [...page.photos];
+        newPhotos[photoIdx] = {
+          ...newPhotos[photoIdx],
+          caption: newCaption
+        };
+        return { ...page, photos: newPhotos };
+      }
+      return page;
+    });
+
+    setEditorDraftBook({
+      ...editorDraftBook,
+      pages: newPages,
+      updatedAt: Date.now()
+    });
+  };
+
+  const handleUpdatePageStoryNote = (pageId: string, newNote: string) => {
+    if (!editorDraftBook) return;
+    const newPages = editorDraftBook.pages.map(page => {
+      if (page.id === pageId) {
+        return { ...page, storyNote: newNote };
+      }
+      return page;
+    });
+
+    setEditorDraftBook({
+      ...editorDraftBook,
+      pages: newPages,
+      updatedAt: Date.now()
+    });
+  };
+
+  const handleRegenerateDraftAiCaptions = async () => {
+    if (!editorDraftBook) return;
+    setIsSavingStoryEdits(true);
+    try {
+      const { updatedBook } = await applyAiNarrativeToPhotobook(editorDraftBook, globalAiTone);
+      setEditorDraftBook(updatedBook);
+      setEditorToastMsg(language === 'ko' ? 'AI 감성 캡션이 새로 작성되었습니다!' : 'AI captions regenerated successfully!');
+      setTimeout(() => setEditorToastMsg(null), 4000);
+    } catch (err) {
+      console.error('[Regenerate Draft Captions Error]:', err);
+    } finally {
+      setIsSavingStoryEdits(false);
+    }
+  };
+
+  const handleSaveStoryEditor = async () => {
+    if (!editorDraftBook) return;
+    setIsSavingStoryEdits(true);
+    try {
+      await savePhotobook(editorDraftBook);
+      await loadBooks();
+      if (activeBook?.id === editorDraftBook.id) {
+        setActiveBook(editorDraftBook);
+      }
+      setUndoStatusMessage(
+        language === 'ko'
+          ? `"${editorDraftBook.title}" 사진첩의 챕터 순서 및 AI 캡션 수정 사항이 성공적으로 저장되었습니다.`
+          : `Story edits saved for "${editorDraftBook.title}".`
+      );
+      setTimeout(() => setUndoStatusMessage(null), 5000);
+      setShowStoryEditorModal(false);
+    } catch (err) {
+      console.error('[Save Story Editor Error]:', err);
+    } finally {
+      setIsSavingStoryEdits(false);
     }
   };
 
@@ -1048,6 +1300,16 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
               <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
                 <button
                   type="button"
+                  onClick={() => handleOpenStoryEditor(currentAlbum.id)}
+                  className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shadow-purple-600/30 cursor-pointer border border-purple-400/30"
+                  title={language === 'ko' ? '이벤트 챕터 순서 재배치 및 AI 캡션 직접 수정' : 'Reorder chapters or edit AI captions'}
+                >
+                  <Wand2 size={13} className="text-amber-300" />
+                  <span>{language === 'ko' ? '스토리 에디터' : 'Story Editor'}</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => {
                     setActiveBook(currentAlbum);
                     setInitialViewerSpread(0);
@@ -1302,6 +1564,18 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
               >
                 <Plus size={18} className="group-hover:rotate-90 transition-transform" />
                 <span>{language === 'ko' ? '새 디지털 사진첩 제작' : 'Create New Photobook'}</span>
+              </button>
+
+              {/* 🧙‍♂️ Smart Story Editor Shortcut */}
+              <button
+                type="button"
+                onClick={() => handleOpenStoryEditor()}
+                disabled={photobooks.length === 0}
+                className="px-5 py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:opacity-50 text-white font-bold text-sm transition-all shadow-xl shadow-purple-600/30 flex items-center gap-2 cursor-pointer group border border-purple-400/40"
+                title={language === 'ko' ? '이벤트 챕터 순서 재배치 및 AI 캡션 오버라이드 (Smart Story Editor)' : 'Reorder chapters and override AI captions'}
+              >
+                <Wand2 size={18} className="text-amber-300 group-hover:rotate-12 transition-transform" />
+                <span>{language === 'ko' ? '🧙‍♂️ 스마트 스토리 에디터' : '🧙‍♂️ Smart Story Editor'}</span>
               </button>
 
               {/* 🍼 FamilyAlbum Monthly Wide View Button */}
@@ -1640,6 +1914,18 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                   )}
                 </button>
 
+                {/* 🧙‍♂️ Smart Story Editor Button */}
+                <button
+                  type="button"
+                  onClick={() => handleOpenStoryEditor(selectedBookIds[0])}
+                  disabled={photobooks.length === 0}
+                  className="px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-md bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white border border-purple-400/40"
+                  title={language === 'ko' ? '이벤트 챕터 순서 재배치 및 AI 캡션 직접 수정 (Smart Story Editor)' : 'Reorder chapters or override AI captions'}
+                >
+                  <Wand2 size={13} className="text-amber-300" />
+                  <span>{language === 'ko' ? '스마트 스토리 에디터' : 'Smart Story Editor'}</span>
+                </button>
+
                 {/* 🔮 Persistent AI Narrative Mode Toggle in Toolbar */}
                 <button
                   type="button"
@@ -1815,6 +2101,20 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
                     >
                       <Sparkles size={13} className={generatingBookIds.includes(book.id) ? "animate-spin text-amber-300" : "text-amber-400 group-hover/btn:rotate-12 transition-transform"} />
                       <span>{generatingBookIds.includes(book.id) ? (language === 'ko' ? '캡션 생성 중...' : 'Generating...') : (language === 'ko' ? 'AI 내러티브 (감성 캡션 생성)' : 'AI Narrative & Captions')}</span>
+                    </button>
+
+                    {/* Smart Story Editor Quick Action */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenStoryEditor(book.id);
+                      }}
+                      className="w-full py-2 px-3 rounded-xl bg-purple-600/20 hover:bg-purple-600 hover:text-white border border-purple-500/30 text-purple-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm group/edit"
+                      title="이 포토북의 챕터 순서를 재배치하거나 AI 캡션을 직접 수정합니다"
+                    >
+                      <Wand2 size={13} className="text-purple-300 group-hover/edit:rotate-12 transition-transform" />
+                      <span>{language === 'ko' ? '스마트 스토리 에디터' : 'Smart Story Editor'}</span>
                     </button>
 
                     {selectedBookIds.length === 2 && selectedBookIds.includes(book.id) && (
@@ -4030,6 +4330,396 @@ export const PhotobookTab: React.FC<PhotobookTabProps> = ({
               </button>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 🧙‍♂️ Smart Story Editor Modal */}
+      <AnimatePresence>
+        {showStoryEditorModal && editorDraftBook && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-slate-900 border border-white/10 rounded-3xl max-w-3xl w-full p-6 md:p-8 shadow-2xl space-y-6 max-h-[90vh] flex flex-col"
+            >
+              {/* Modal Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-blue-600 text-white shadow-lg shadow-purple-600/30">
+                    <Wand2 size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-white italic uppercase tracking-tight flex items-center gap-2">
+                      <span>{language === 'ko' ? '스마트 스토리 에디터' : 'Smart Story Editor'}</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase">
+                        AI & Chapter Override
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {language === 'ko'
+                        ? '이벤트의 챕터 순서를 재배치하고, AI가 생성한 캡션 및 스토리 노트를 자유롭게 수정 및 직접 오버라이드합니다.'
+                        : 'Reorder event chapters manually or override AI-generated captions and story notes.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Book Switcher Dropdown */}
+                  {photobooks.length > 1 && (
+                    <select
+                      value={editorBookId}
+                      onChange={(e) => handleSwitchEditorBook(e.target.value)}
+                      className="bg-slate-950 text-white text-xs font-bold rounded-xl px-3 py-1.5 border border-white/10 focus:outline-none focus:border-purple-500 max-w-[180px] truncate"
+                    >
+                      {photobooks.map(b => (
+                        <option key={b.id} value={b.id}>
+                          {b.title} ({b.totalPhotos}장)
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setShowStoryEditorModal(false)}
+                    className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Mode Navigation Tabs: Chapters vs Captions */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-950/80 p-1.5 rounded-2xl border border-white/10 shrink-0">
+                <div className="flex items-center gap-2 w-full sm:w-auto flex-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditorActiveTab('chapters')}
+                    className={`flex-1 py-2 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                      editorActiveTab === 'chapters'
+                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md shadow-purple-600/30 font-black'
+                        : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <Bookmark size={14} />
+                    <span>{language === 'ko' ? '1. 챕터 순서 재배치 & 제목 수정' : '1. Reorder & Edit Chapters'}</span>
+                    <span className="text-[10px] font-mono bg-white/20 px-1.5 py-0.2 rounded-full">
+                      {editorDraftBook.chapters?.length || 0}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEditorActiveTab('captions')}
+                    className={`flex-1 py-2 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                      editorActiveTab === 'captions'
+                        ? 'bg-gradient-to-r from-amber-500 to-rose-600 text-white shadow-md shadow-amber-500/30 font-black'
+                        : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <MessageSquareQuote size={14} />
+                    <span>{language === 'ko' ? '2. AI 감성 캡션 수정 & 오버라이드' : '2. Override AI Captions'}</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleRegenerateDraftAiCaptions}
+                  disabled={isSavingStoryEdits}
+                  className="w-full sm:w-auto py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                  title="현재 설정된 AI 톤으로 스토리 노트를 전체 재작성"
+                >
+                  <RefreshCw size={12} className={isSavingStoryEdits ? "animate-spin text-amber-300" : ""} />
+                  <span>{language === 'ko' ? 'AI 캡션 전체 재작성' : 'Regenerate AI'}</span>
+                </button>
+              </div>
+
+              {/* Toast Message inside Editor if triggered */}
+              {editorToastMsg && (
+                <div className="bg-amber-500/20 border border-amber-500/40 text-amber-200 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 animate-pulse">
+                  <Sparkles size={14} />
+                  <span>{editorToastMsg}</span>
+                </div>
+              )}
+
+              {/* Modal Body Scroll Container */}
+              <div className="overflow-y-auto pr-1 space-y-4 flex-1 custom-scrollbar">
+                {editorActiveTab === 'chapters' ? (
+                  /* TAB 1: Chapters Reordering & Info Editing */
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between text-xs text-slate-300">
+                      <span className="font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        <Bookmark size={14} className="text-purple-400" />
+                        <span>{language === 'ko' ? '챕터 리스트 (위/아래 화살표로 순서 변경 가능)' : 'Chapter List (Use Up/Down arrows to reorder)'}</span>
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={handleAddChapter}
+                        className="px-3 py-1 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 font-bold text-xs flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus size={13} />
+                        <span>{language === 'ko' ? '새 챕터 추가' : 'Add Chapter'}</span>
+                      </button>
+                    </div>
+
+                    <div className="space-y-3">
+                      {editorDraftBook.chapters?.map((chap, cIdx) => (
+                        <div
+                          key={chap.id || cIdx}
+                          className="p-4 rounded-2xl bg-slate-950/80 border border-white/10 hover:border-purple-500/40 transition-all flex flex-col md:flex-row gap-4 items-start md:items-center shadow-md relative"
+                        >
+                          {/* Left Index & Controls */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="w-8 h-8 rounded-xl bg-purple-600/20 border border-purple-500/40 text-purple-300 font-mono font-bold text-xs flex items-center justify-center">
+                              {cIdx + 1}
+                            </span>
+
+                            {/* Up & Down Reorder Arrow Buttons */}
+                            <div className="flex flex-col gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleMoveChapter(cIdx, cIdx - 1)}
+                                disabled={cIdx === 0}
+                                className="p-1 rounded bg-white/5 hover:bg-purple-600 hover:text-white text-slate-400 disabled:opacity-20 disabled:hover:bg-white/5 cursor-pointer transition-colors"
+                                title={language === 'ko' ? '위로 이동' : 'Move Up'}
+                              >
+                                <ArrowUp size={12} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleMoveChapter(cIdx, cIdx + 1)}
+                                disabled={cIdx === (editorDraftBook.chapters?.length || 1) - 1}
+                                className="p-1 rounded bg-white/5 hover:bg-purple-600 hover:text-white text-slate-400 disabled:opacity-20 disabled:hover:bg-white/5 cursor-pointer transition-colors"
+                                title={language === 'ko' ? '아래로 이동' : 'Move Down'}
+                              >
+                                <ArrowDown size={12} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Hero Thumbnail Preview if available */}
+                          {chap.heroPhotoPath && (
+                            <div className="w-20 h-20 rounded-xl overflow-hidden bg-slate-900 shrink-0 border border-white/10 relative hidden sm:block">
+                              <BookPhotoView
+                                photo={{ path: chap.heroPhotoPath }}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          )}
+
+                          {/* Editable Chapter Fields */}
+                          <div className="flex-1 space-y-2 w-full">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] font-mono uppercase text-slate-400 block mb-0.5">
+                                  {language === 'ko' ? '챕터 제목' : 'Chapter Title'}
+                                </label>
+                                <input
+                                  type="text"
+                                  value={chap.title}
+                                  onChange={(e) => handleUpdateChapterField(cIdx, 'title', e.target.value)}
+                                  className="w-full px-3 py-1.5 bg-slate-900 border border-white/10 rounded-xl text-white text-xs font-bold focus:outline-none focus:border-purple-500"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="text-[10px] font-mono uppercase text-slate-400 block mb-0.5">
+                                  {language === 'ko' ? '부제목' : 'Subtitle'}
+                                </label>
+                                <input
+                                  type="text"
+                                  value={chap.subtitle || ''}
+                                  onChange={(e) => handleUpdateChapterField(cIdx, 'subtitle', e.target.value)}
+                                  placeholder="e.g. Memory Segment"
+                                  className="w-full px-3 py-1.5 bg-slate-900 border border-white/10 rounded-xl text-slate-200 text-xs focus:outline-none focus:border-purple-500"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="text-[10px] font-mono uppercase text-slate-400 block mb-0.5">
+                                {language === 'ko' ? '챕터 프롤로그 (소개글)' : 'Chapter Prologue / Intro Note'}
+                              </label>
+                              <textarea
+                                rows={2}
+                                value={chap.prologue || ''}
+                                onChange={(e) => handleUpdateChapterField(cIdx, 'prologue', e.target.value)}
+                                placeholder="Write prologue or story intro..."
+                                className="w-full px-3 py-1.5 bg-slate-900 border border-white/10 rounded-xl text-slate-300 text-xs italic focus:outline-none focus:border-purple-500 resize-none"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Delete Chapter Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteChapter(cIdx)}
+                            className="p-2 rounded-xl bg-white/5 hover:bg-rose-600 text-slate-400 hover:text-white transition-all cursor-pointer shrink-0 self-end md:self-center"
+                            title={language === 'ko' ? '챕터 삭제' : 'Delete Chapter'}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  /* TAB 2: Captions & Story Notes Override */
+                  <div className="space-y-4">
+                    {/* Chapter Filter Bar */}
+                    <div className="flex items-center justify-between gap-2 p-3 rounded-2xl bg-slate-950/80 border border-white/10 text-xs">
+                      <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar">
+                        <span className="font-bold text-slate-400 shrink-0">
+                          {language === 'ko' ? '챕터 필터:' : 'Filter Chapter:'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setEditorFilterChapter('all')}
+                          className={`px-2.5 py-1 rounded-lg font-bold text-xs transition-all shrink-0 cursor-pointer ${
+                            editorFilterChapter === 'all'
+                              ? 'bg-amber-500 text-slate-950'
+                              : 'bg-white/5 text-slate-300 hover:bg-white/10'
+                          }`}
+                        >
+                          {language === 'ko' ? '전체 페이지' : 'All Pages'}
+                        </button>
+                        {editorDraftBook.chapters?.map(ch => (
+                          <button
+                            key={ch.id}
+                            type="button"
+                            onClick={() => setEditorFilterChapter(ch.title)}
+                            className={`px-2.5 py-1 rounded-lg font-semibold text-xs transition-all shrink-0 cursor-pointer truncate max-w-[130px] ${
+                              editorFilterChapter === ch.title
+                                ? 'bg-purple-600 text-white font-bold'
+                                : 'bg-white/5 text-slate-300 hover:bg-white/10'
+                            }`}
+                          >
+                            {ch.title}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Pages & Photo Captions List */}
+                    <div className="space-y-4">
+                      {editorDraftBook.pages
+                        .filter(page => editorFilterChapter === 'all' || !page.chapterTitle || page.chapterTitle === editorFilterChapter)
+                        .map(page => (
+                          <div
+                            key={page.id}
+                            className="p-4 rounded-2xl bg-slate-950/80 border border-white/10 space-y-3 shadow-md"
+                          >
+                            {/* Page Header */}
+                            <div className="flex items-center justify-between pb-2 border-b border-white/5 text-xs">
+                              <div className="flex items-center gap-2 font-mono">
+                                <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-bold">
+                                  Page {page.pageNumber} ({page.layout})
+                                </span>
+                                {page.chapterTitle && (
+                                  <span className="text-slate-400 font-sans truncate max-w-[200px]">
+                                    • {page.chapterTitle}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Page Story Note / Accent Quote Edit if applicable */}
+                            {page.layout !== 'cover' && page.layout !== 'back-cover' && (
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-mono uppercase text-slate-400 flex items-center justify-between">
+                                  <span>{language === 'ko' ? '페이지 감성 스토리 노트' : 'Page Story Note'}</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={page.storyNote || ''}
+                                  onChange={(e) => handleUpdatePageStoryNote(page.id, e.target.value)}
+                                  placeholder="e.g. 마음에 새겨진 영원의 풍경..."
+                                  className="w-full px-3 py-1.5 bg-slate-900 border border-white/10 rounded-xl text-slate-200 text-xs italic focus:outline-none focus:border-amber-400"
+                                />
+                              </div>
+                            )}
+
+                            {/* Photos List inside Page */}
+                            <div className="space-y-3 pt-1">
+                              {page.photos.map((ph, pIdx) => (
+                                <div
+                                  key={`${page.id}-ph-${pIdx}`}
+                                  className="flex flex-col sm:flex-row gap-3 items-start sm:items-center bg-white/5 p-3 rounded-xl border border-white/5"
+                                >
+                                  {/* Photo Thumbnail */}
+                                  <div className="w-16 h-16 rounded-lg overflow-hidden bg-black shrink-0 border border-white/10">
+                                    <BookPhotoView
+                                      photo={ph}
+                                      className="w-full h-full object-cover"
+                                    />
+                                  </div>
+
+                                  {/* Caption Input */}
+                                  <div className="flex-1 space-y-1 w-full">
+                                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+                                      <span className="flex items-center gap-1 text-amber-300">
+                                        <MessageSquareQuote size={11} />
+                                        <span>Photo {pIdx + 1} Caption</span>
+                                      </span>
+                                      {ph.location && <span>📍 {ph.location}</span>}
+                                    </div>
+                                    <textarea
+                                      rows={2}
+                                      value={ph.caption || ''}
+                                      onChange={(e) => handleUpdatePhotoCaption(page.id, pIdx, e.target.value)}
+                                      placeholder="Overriding photo caption..."
+                                      className="w-full px-3 py-1.5 bg-slate-900 border border-white/10 rounded-xl text-white text-xs leading-relaxed focus:outline-none focus:border-amber-400 resize-none"
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="pt-4 border-t border-white/10 flex items-center justify-between shrink-0">
+                <div className="text-xs text-slate-400 font-mono">
+                  {editorDraftBook.pages.length} Pages • {editorDraftBook.totalPhotos} Photos
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowStoryEditorModal(false)}
+                    disabled={isSavingStoryEdits}
+                    className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer"
+                  >
+                    {language === 'ko' ? '취소' : 'Cancel'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveStoryEditor}
+                    disabled={isSavingStoryEdits}
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-purple-600/30 cursor-pointer"
+                  >
+                    {isSavingStoryEdits ? (
+                      <Sparkles size={14} className="animate-spin text-amber-300" />
+                    ) : (
+                      <Save size={14} />
+                    )}
+                    <span>
+                      {isSavingStoryEdits
+                        ? (language === 'ko' ? '스토리 저장 중...' : 'Saving Changes...')
+                        : (language === 'ko' ? '스토리 수정 사항 저장' : 'Save Story Edits')}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
