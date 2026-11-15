@@ -291,6 +291,56 @@ export const LibraryTab = ({
     return '🏷️';
   };
 
+  // Count of nature and landscape themed photos
+  const naturePhotosCount = useMemo(() => {
+    return libraryPhotos.filter(p => {
+      const c = (p.category || '').toLowerCase();
+      const tags = p.tags || p.aiTags || [];
+      const hasTag = tags.some(t => t.toLowerCase() === 'nature' || t.toLowerCase() === 'landscape');
+      return c === 'nature' || c === 'landscape' || hasTag;
+    }).length;
+  }, [libraryPhotos]);
+
+  // Count of people and portrait themed photos
+  const peoplePhotosCount = useMemo(() => {
+    return libraryPhotos.filter(p => {
+      const c = (p.category || '').toLowerCase();
+      const tags = p.tags || p.aiTags || [];
+      const hasTag = tags.some(t => t.toLowerCase() === 'people' || t.toLowerCase() === 'portrait' || t.toLowerCase() === 'person' || t.toLowerCase() === 'human' || t.toLowerCase() === 'family');
+      return c === 'people' || c === 'portrait' || (p.detectedFaces !== undefined && p.detectedFaces > 0) || hasTag;
+    }).length;
+  }, [libraryPhotos]);
+
+  // Count of travel and urban themed photos
+  const travelPhotosCount = useMemo(() => {
+    return libraryPhotos.filter(p => {
+      const c = (p.category || '').toLowerCase();
+      const tags = p.tags || p.aiTags || [];
+      const hasTag = tags.some(t => t.toLowerCase() === 'travel' || t.toLowerCase() === 'urban' || t.toLowerCase() === 'trip' || t.toLowerCase() === 'vacation' || t.toLowerCase() === 'city');
+      return c === 'travel' || c === 'urban' || hasTag;
+    }).length;
+  }, [libraryPhotos]);
+
+  // Count of urban and architecture themed photos
+  const urbanPhotosCount = useMemo(() => {
+    return libraryPhotos.filter(p => {
+      const c = (p.category || '').toLowerCase();
+      const tags = p.tags || p.aiTags || [];
+      const hasTag = tags.some(t => t.toLowerCase() === 'urban' || t.toLowerCase() === 'architecture' || t.toLowerCase() === 'city' || t.toLowerCase() === 'building' || t.toLowerCase() === 'skyline');
+      return c === 'urban' || c === 'architecture' || hasTag;
+    }).length;
+  }, [libraryPhotos]);
+
+  // Count of work and document themed photos
+  const workPhotosCount = useMemo(() => {
+    return libraryPhotos.filter(p => {
+      const c = (p.category || '').toLowerCase();
+      const tags = p.tags || p.aiTags || [];
+      const hasTag = tags.some(t => t.toLowerCase() === 'work' || t.toLowerCase() === 'document' || t.toLowerCase() === 'office' || t.toLowerCase() === 'receipt' || t.toLowerCase() === 'text' || t.toLowerCase() === 'documents');
+      return c === 'work' || c === 'document' || c === 'documents' || hasTag;
+    }).length;
+  }, [libraryPhotos]);
+
   // Preset & detected categories dropdown list for header filter
   const categoryDropdownOptions = useMemo(() => {
     const presetNames = ['Nature', 'People', 'Travel', 'Work', 'Abstract', 'Food', 'Architecture', 'Documents'];
@@ -318,13 +368,25 @@ export const LibraryTab = ({
     if (naturePhotosCount > 0) {
       countMap.set('Nature', naturePhotosCount);
     }
+    if (peoplePhotosCount > 0) {
+      countMap.set('People', peoplePhotosCount);
+    }
+    if (travelPhotosCount > 0) {
+      countMap.set('Travel', travelPhotosCount);
+    }
+    if (urbanPhotosCount > 0) {
+      countMap.set('Architecture', urbanPhotosCount);
+    }
+    if (workPhotosCount > 0) {
+      countMap.set('Work', workPhotosCount);
+    }
 
     const allNames = Array.from(new Set([...presetNames, ...Array.from(countMap.keys())]));
     return allNames.map(name => ({
       name,
       count: countMap.get(name) || 0,
     }));
-  }, [libraryPhotos, categoryStats]);
+  }, [libraryPhotos, categoryStats, naturePhotosCount, peoplePhotosCount, travelPhotosCount, urbanPhotosCount, workPhotosCount]);
 
   // Compute available AI categories with photo counts, IDs, and current selection status
   const aiCategoryItems = useMemo(() => {
@@ -429,16 +491,6 @@ export const LibraryTab = ({
     }
   };
 
-  // Count of nature and landscape themed photos
-  const naturePhotosCount = useMemo(() => {
-    return libraryPhotos.filter(p => {
-      const c = (p.category || '').toLowerCase();
-      const tags = p.tags || p.aiTags || [];
-      const hasTag = tags.some(t => t.toLowerCase() === 'nature' || t.toLowerCase() === 'landscape');
-      return c === 'nature' || c === 'landscape' || hasTag;
-    }).length;
-  }, [libraryPhotos]);
-
   // Dedicated 'Nature' and 'Landscape' filter button handlers that update selectedCategories to include 'nature' and 'landscape'
   const isNatureFilterActive = useMemo(() => {
     return selectedCategories.some(c => c.toLowerCase() === 'nature') && selectedCategories.some(c => c.toLowerCase() === 'landscape');
@@ -459,16 +511,6 @@ export const LibraryTab = ({
   const isLandscapeFilterActive = isNatureFilterActive;
   const handleToggleLandscapeFilter = handleToggleNatureFilter;
 
-  // Count of people and portrait themed photos
-  const peoplePhotosCount = useMemo(() => {
-    return libraryPhotos.filter(p => {
-      const c = (p.category || '').toLowerCase();
-      const tags = p.tags || p.aiTags || [];
-      const hasTag = tags.some(t => t.toLowerCase() === 'people' || t.toLowerCase() === 'portrait' || t.toLowerCase() === 'person' || t.toLowerCase() === 'human' || t.toLowerCase() === 'family');
-      return c === 'people' || c === 'portrait' || (p.detectedFaces !== undefined && p.detectedFaces > 0) || hasTag;
-    }).length;
-  }, [libraryPhotos]);
-
   // Dedicated 'People' filter button handler that updates selectedCategories to include 'people' and 'portrait'
   const isPeopleFilterActive = useMemo(() => {
     return selectedCategories.some(c => c.toLowerCase() === 'people') && selectedCategories.some(c => c.toLowerCase() === 'portrait');
@@ -485,16 +527,6 @@ export const LibraryTab = ({
       }
     });
   };
-
-  // Count of travel and urban themed photos
-  const travelPhotosCount = useMemo(() => {
-    return libraryPhotos.filter(p => {
-      const c = (p.category || '').toLowerCase();
-      const tags = p.tags || p.aiTags || [];
-      const hasTag = tags.some(t => t.toLowerCase() === 'travel' || t.toLowerCase() === 'urban' || t.toLowerCase() === 'trip' || t.toLowerCase() === 'vacation' || t.toLowerCase() === 'city');
-      return c === 'travel' || c === 'urban' || hasTag;
-    }).length;
-  }, [libraryPhotos]);
 
   // Dedicated 'Travel' filter button handler that updates selectedCategories to include 'travel' and 'urban'
   const isTravelFilterActive = useMemo(() => {
@@ -513,16 +545,6 @@ export const LibraryTab = ({
     });
   };
 
-  // Count of urban and architecture themed photos
-  const urbanPhotosCount = useMemo(() => {
-    return libraryPhotos.filter(p => {
-      const c = (p.category || '').toLowerCase();
-      const tags = p.tags || p.aiTags || [];
-      const hasTag = tags.some(t => t.toLowerCase() === 'urban' || t.toLowerCase() === 'architecture' || t.toLowerCase() === 'city' || t.toLowerCase() === 'building' || t.toLowerCase() === 'skyline');
-      return c === 'urban' || c === 'architecture' || hasTag;
-    }).length;
-  }, [libraryPhotos]);
-
   // Dedicated 'Urban' filter button handler that updates selectedCategories to include 'urban' and 'architecture'
   const isUrbanFilterActive = useMemo(() => {
     return selectedCategories.some(c => c.toLowerCase() === 'urban') && selectedCategories.some(c => c.toLowerCase() === 'architecture');
@@ -540,16 +562,6 @@ export const LibraryTab = ({
     });
   };
 
-  // Count of work and document themed photos
-  const workPhotosCount = useMemo(() => {
-    return libraryPhotos.filter(p => {
-      const c = (p.category || '').toLowerCase();
-      const tags = p.tags || p.aiTags || [];
-      const hasTag = tags.some(t => t.toLowerCase() === 'work' || t.toLowerCase() === 'document' || t.toLowerCase() === 'office' || t.toLowerCase() === 'receipt' || t.toLowerCase() === 'text' || t.toLowerCase() === 'documents');
-      return c === 'work' || c === 'document' || c === 'documents' || hasTag;
-    }).length;
-  }, [libraryPhotos]);
-
   // Dedicated 'Work' filter button handler that updates selectedCategories to include 'work' and 'document'
   const isWorkFilterActive = useMemo(() => {
     return selectedCategories.some(c => c.toLowerCase() === 'work') && selectedCategories.some(c => c.toLowerCase() === 'document');
@@ -566,6 +578,8 @@ export const LibraryTab = ({
       }
     });
   };
+
+
 
   // FastView Profile State & Listener for PC vs Mobile Dual-Mode
   const [fastViewProfile, setFastViewProfile] = useState(() => fastViewEngine.getProfileConfig());

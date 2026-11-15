@@ -673,6 +673,12 @@ export function useScanner(
         );
 
         const fileHandle = (window as any).__webFileMap?.get(photo.path);
+        if (fileHandle && (fileHandle instanceof File || fileHandle instanceof Blob)) {
+          // Persist compact WebP thumbnail asynchronously so mobile refreshes & offline mode keep previews
+          import('../services/offlineMediaStore')
+            .then(({ offlineMediaStore }) => offlineMediaStore.persistFromFile(photo.path, fileHandle))
+            .catch(() => {});
+        }
 
         processedResults.push({
           originalId: photo.originalId || stableId,
@@ -699,7 +705,7 @@ export function useScanner(
           tags: tagsList,
           detectedFaces: photo.detectedFaces || 0,
           qualityTags: photo.qualityTags || [],
-          blob: undefined, // Managed via __webFileMap in memory to prevent DataError: Failed to write blobs (InvalidBlob) in IndexedDB
+          blob: undefined, // Managed via __webFileMap & offlineMediaStore
           thumbnail: undefined,
           ocrText: photo.ocrText,
           status: 'pending' as const,

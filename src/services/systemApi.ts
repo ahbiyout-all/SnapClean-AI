@@ -711,6 +711,17 @@ export const SystemAPI = {
       // fallback
     }
 
+    try {
+      const { offlineMediaStore } = await import('./offlineMediaStore');
+      const persistedUrl = await offlineMediaStore.getThumbnailUrl(path);
+      if (persistedUrl) {
+        cacheMap.set(path, persistedUrl);
+        return persistedUrl;
+      }
+    } catch {
+      // fallback
+    }
+
     return SystemAPI.getImageUrl(path, 'thumbnail');
   },
 

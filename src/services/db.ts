@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import { PhotobookRecord } from '../types';
 
 export interface PhotoRecord {
   id?: number;
@@ -71,15 +72,36 @@ export interface EventRecord {
   tags?: string[];
   theme?: 'minimal' | 'vintage' | 'bold' | 'noir' | 'vibrant';
   coverStyle?: string;
+  chapterCaptions?: Record<string, string>;
 }
 
-import { PhotobookRecord } from '../types';
+export interface ThumbnailCacheRecord {
+  path: string;
+  blob: Blob;
+  size: number;
+  width?: number;
+  height?: number;
+  createdAt: number;
+}
+
+export interface AiOutboxRecord {
+  id?: number;
+  endpoint: string;
+  payload: any;
+  dedupeKey: string;
+  status: 'pending' | 'processing' | 'failed';
+  retries: number;
+  createdAt: number;
+  lastError?: string;
+}
 
 export class SnapCleanDB extends Dexie {
   photos!: Table<PhotoRecord>;
   auditLogs!: Table<AuditLog>;
   events!: Table<EventRecord>;
   photobooks!: Table<PhotobookRecord>;
+  thumbnailCache!: Table<ThumbnailCacheRecord, string>;
+  aiOutbox!: Table<AiOutboxRecord, number>;
 
   constructor() {
     super('SnapCleanAI_DB');
@@ -112,6 +134,14 @@ export class SnapCleanDB extends Dexie {
       auditLogs: '++id, action, timestamp',
       events: 'id, title, startDate, endDate',
       photobooks: 'id, title, theme, createdAt, updatedAt'
+    });
+    this.version(8).stores({
+      photos: '++id, originalId, path, size, md5, pHash, sparseHash, status, isPrivate, isDeleted, eventId, category, aestheticScore',
+      auditLogs: '++id, action, timestamp',
+      events: 'id, title, startDate, endDate',
+      photobooks: 'id, title, theme, createdAt, updatedAt',
+      thumbnailCache: 'path, createdAt, size',
+      aiOutbox: '++id, endpoint, dedupeKey, status, createdAt'
     });
   }
 }
@@ -146,7 +176,7 @@ db.photos.hook('updating', function (modifications: any) {
     }
   }
 });
- 
+
 /**
  * Resolves Phase 40.2 Neural Index Regeneration.
  * Scans, compacts, and self-heals high fragmentation rates within Dexie and SQLite layers.
@@ -159,8 +189,7 @@ export async function optimizeAndRegenerateIndices(): Promise<{
 }> {
   const allPhotos = await db.photos.toArray();
   const fragmentationPercent = Math.min(42, Math.round((Math.random() * 15) + (allPhotos.length > 30 ? 22 : 8)));
-  
-  // Restructure and normalize database index parameters to trigger a live index compaction
+
   const updatedPhotos = allPhotos.map(photo => {
     return {
       ...photo,
@@ -169,13 +198,11 @@ export async function optimizeAndRegenerateIndices(): Promise<{
       processedAt: photo.processedAt || Date.now()
     };
   });
-  
+
   if (updatedPhotos.length > 0) {
     await db.photos.bulkPut(updatedPhotos);
   }
-  
-  console.log(`[Neural Index Engine] Successfully resolved ${updatedPhotos.length} records. Packed indices and reduced fragmentation from ${fragmentationPercent}% to 1.2%.`);
-  
+
   return {
     success: true,
     fragmentationPercent,
@@ -186,7 +213,6 @@ export async function optimizeAndRegenerateIndices(): Promise<{
 
 /**
  * Executes a database operation with exponential backoff on transaction lock or conflict.
- * Resolves Phase 37.1: DB Concurrency Hardening.
  */
 export async function runDbWithRetry<T>(
   operation: () => Promise<T>,
@@ -216,15 +242,20 @@ export async function purgeAllLocalIndexData(options: { keepAuditLogs?: boolean 
 }> {
   const count = await db.photos.count();
   await db.photos.clear();
-  
+
   if (!options.keepAuditLogs) {
     try {
       await db.auditLogs.clear();
     } catch (e) {}
   }
-  
+
   try {
     await db.events.clear();
+  } catch (e) {}
+
+  try {
+    await db.thumbnailCache.clear();
+    await db.aiOutbox.clear();
   } catch (e) {}
 
   try {
@@ -244,4 +275,3 @@ export async function purgeAllLocalIndexData(options: { keepAuditLogs?: boolean 
     success: true
   };
 }
-

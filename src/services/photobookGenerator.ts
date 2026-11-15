@@ -368,6 +368,8 @@ export function clusterPhotosIntoChapters(
       title: loc ? `${meta.title} (${loc})` : meta.title,
       subtitle: meta.subtitle,
       prologue: meta.prologue,
+      caption: meta.prologue,
+      aiCaption: meta.prologue,
       timeRange: { start: firstTime, end: lastTime },
       locationName: loc,
       heroPhotoPath: bestInGroup.path,

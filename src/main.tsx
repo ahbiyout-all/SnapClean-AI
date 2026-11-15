@@ -41,6 +41,8 @@ import './index.css';
 import { I18nProvider } from './i18n/context';
 import { NeuralCrashReporter } from './components/NeuralCrashReporter';
 
+import { registerSW } from 'virtual:pwa-register';
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <NeuralCrashReporter>
@@ -51,11 +53,22 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-// Register Service Worker for PWA (Web environment only)
+// Register Workbox Service Worker via vite-plugin-pwa (Web environment only)
 if ('serviceWorker' in navigator && !('__TAURI_INTERNALS__' in window)) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(err => {
-      console.log('SW registration failed: ', err);
-    });
+  const updateSW = registerSW({
+    immediate: true,
+    onNeedRefresh() {
+      window.dispatchEvent(
+        new CustomEvent('snapclean-sw-need-refresh', {
+          detail: { updateSW },
+        }),
+      );
+    },
+    onOfflineReady() {
+      window.dispatchEvent(new CustomEvent('snapclean-sw-offline-ready'));
+    },
+    onRegisterError(err) {
+      console.warn('[PWA] Service Worker registration error:', err);
+    },
   });
 }

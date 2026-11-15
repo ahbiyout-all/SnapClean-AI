@@ -197,23 +197,23 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       {activeSubTab === 'general' ? (
         <div className="space-y-8">
           {/* PRIMARY HERO CARD: Global 'Enable Background Scanning' Toggle */}
-          <div className="relative overflow-hidden rounded-[2.5rem] bg-linear-to-br from-slate-900 via-slate-900/90 to-indigo-950/40 border border-indigo-500/30 shadow-2xl p-6 sm:p-8 backdrop-blur-xl">
+          <div className="relative overflow-hidden rounded-3xl bg-slate-900 border border-indigo-500/30 shadow-2xl p-5 sm:p-8">
             <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
             <div className="absolute bottom-0 left-0 w-60 h-60 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
 
-            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-white/10">
+            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-5 pb-6 border-b border-white/10">
               <div className="flex items-start gap-4">
                 <div
-                  className={`p-4 rounded-2xl border transition-all ${
+                  className={`p-3.5 rounded-2xl border transition-all ${
                     watcherStatus.isEnabled
                       ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 shadow-lg shadow-emerald-500/10'
                       : 'bg-slate-800/80 border-slate-700 text-slate-400'
                   }`}
                 >
                   {watcherStatus.isEnabled ? (
-                    <Eye size={28} className="animate-pulse" />
+                    <Eye size={26} />
                   ) : (
-                    <EyeOff size={28} />
+                    <EyeOff size={26} />
                   )}
                 </div>
                 <div className="space-y-1.5">
@@ -221,18 +221,19 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                     <h3 className="text-lg sm:text-xl font-black text-white tracking-tight">
                       {t('enableBackgroundScanning')}
                     </h3>
-                    <span
-                      className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border shadow-sm ${
-                        watcherStatus.isEnabled
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 animate-pulse'
-                          : 'bg-slate-800 text-slate-400 border-slate-700'
-                      }`}
-                    >
-                      {watcherStatus.isEnabled ? t('backgroundScanningActive') : t('backgroundScanningDisabled')}
+                    <span className="text-[11px] font-semibold text-indigo-300">
+                      ·{' '}
+                      {watcherStatus.syncMode === 'native'
+                        ? (language === 'ko' ? '네이티브 OS 폴더 감시' : 'Native OS Watcher')
+                        : (language === 'ko' ? '모바일/PWA 포그라운드 복귀 동기화' : 'PWA Foreground Sync')}
                     </span>
                   </div>
                   <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-2xl">
-                    {t('enableBackgroundScanningDesc')}
+                    {watcherStatus.syncMode === 'native'
+                      ? t('enableBackgroundScanningDesc')
+                      : language === 'ko'
+                        ? '모바일 및 웹 PWA 환경에서는 배터리 절약과 OS 샌드박스 보호를 위해 앱 복귀 시 증분 인덱스를 자동 동기화합니다.'
+                        : 'In Mobile Web & PWA mode, incremental library checks run automatically when returning to the app to conserve battery.'}
                   </p>
                 </div>
               </div>
@@ -272,11 +273,15 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 <div className="flex items-center gap-2 mt-2">
                   <div
                     className={`w-2.5 h-2.5 rounded-full ${
-                      watcherStatus.isRunning ? 'bg-emerald-400 animate-ping' : 'bg-slate-600'
+                      watcherStatus.isRunning ? 'bg-emerald-400' : 'bg-slate-600'
                     }`}
                   />
-                  <span className="text-sm font-black font-mono text-white">
-                    {watcherStatus.isRunning ? (language === 'ko' ? '동작 중' : 'RUNNING') : (language === 'ko' ? '정지됨' : 'STOPPED')}
+                  <span className="text-sm font-black font-mono tabular-nums text-white">
+                    {watcherStatus.isRunning
+                      ? watcherStatus.syncMode === 'native'
+                        ? (language === 'ko' ? '동작 중' : 'RUNNING')
+                        : (language === 'ko' ? 'PWA 활성' : 'PWA SYNC')
+                      : (language === 'ko' ? '정지됨' : 'STOPPED')}
                   </span>
                 </div>
               </div>
@@ -287,8 +292,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 </span>
                 <div className="flex items-center gap-2 mt-2">
                   <Folder size={16} className="text-indigo-400" />
-                  <span className="text-sm font-black font-mono text-white">
-                    {watcherStatus.watchPaths.length} {language === 'ko' ? '개 디렉토리' : 'Dirs'}
+                  <span className="text-sm font-black font-mono tabular-nums text-white">
+                    {watcherStatus.watchPaths.length} {language === 'ko' ? '개' : 'Dirs'}
                   </span>
                 </div>
               </div>
@@ -299,7 +304,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 </span>
                 <div className="flex items-center gap-2 mt-2">
                   <Clock size={16} className="text-amber-400" />
-                  <span className="text-sm font-black font-mono text-slate-200">
+                  <span className="text-sm font-black font-mono tabular-nums text-slate-200">
                     {formatLastScan(watcherStatus.lastScanTime)}
                   </span>
                 </div>
@@ -312,9 +317,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 <button
                   onClick={handleManualScanNow}
                   disabled={isScanningNow}
-                  className="mt-2 py-1.5 px-3 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-95 shadow-md shadow-indigo-600/10"
+                  className="mt-2 py-2 px-3 min-h-[44px] bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
                 >
-                  <RefreshCw size={12} className={isScanningNow ? 'animate-spin' : ''} />
+                  <RefreshCw size={13} className={isScanningNow ? 'animate-spin' : ''} />
                   <span>{isScanningNow ? (language === 'ko' ? '검사 중...' : 'Scanning...') : t('backgroundScanningTriggerNow')}</span>
                 </button>
               </div>

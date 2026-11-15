@@ -19,6 +19,7 @@ export interface FileWatcherStatus {
   lastScanTime: number | null;
   lastDetectedFilesCount: number;
   lastEventMessage?: string;
+  syncMode: 'native' | 'pwa_visibility';
 }
 
 export type FileWatcherListener = (status: FileWatcherStatus) => void;
@@ -32,6 +33,7 @@ class FileWatcherService {
   private lastEventMessage: string | undefined = undefined;
   private listeners: Set<FileWatcherListener> = new Set();
   private scanTimer: ReturnType<typeof setInterval> | null = null;
+  private visibilityListenerAttached = false;
 
   private constructor() {
     this.loadPersistedState();
@@ -131,14 +133,28 @@ class FileWatcherService {
           console.error(`[FileWatcherService] Failed to start native watcher for ${path}:`, err);
         }
       }
+    } else if (typeof document !== 'undefined' && !this.visibilityListenerAttached) {
+      // On Mobile Web & PWA, trigger incremental sync when returning to foreground to save battery
+      this.visibilityListenerAttached = true;
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && this.isRunning && this.isEnabled()) {
+          const elapsed = this.lastScanTime ? Date.now() - this.lastScanTime : Infinity;
+          if (elapsed > 60000) {
+            this.performBackgroundHeartbeat();
+          }
+        }
+      });
     }
 
-    // Set up background heartbeat / incremental sync trigger
+    // Set up background heartbeat (skips when tab is hidden on web/PWA to save mobile battery)
     if (this.scanTimer) {
       clearInterval(this.scanTimer);
     }
     this.scanTimer = setInterval(async () => {
       if (this.isRunning && this.isEnabled()) {
+        if (!SystemAPI.isTauri() && typeof document !== 'undefined' && document.hidden) {
+          return;
+        }
         await this.performBackgroundHeartbeat();
       }
     }, 60000); // Heartbeat check every 60s
@@ -250,6 +266,7 @@ class FileWatcherService {
       lastScanTime: this.lastScanTime,
       lastDetectedFilesCount: this.lastDetectedFilesCount,
       lastEventMessage: this.lastEventMessage,
+      syncMode: SystemAPI.isTauri() ? 'native' : 'pwa_visibility',
     };
   }
 

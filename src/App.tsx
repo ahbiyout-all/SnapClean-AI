@@ -4,9 +4,12 @@ import React, {
   useRef,
   ElementType,
   useMemo,
+  lazy,
+  Suspense,
 } from "react";
 import * as d3 from "d3";
-import { db, PhotoRecord, AuditLog, EventRecord } from "./services/db";
+import { db, PhotoRecord, AuditLog, EventRecord, purgeAllLocalIndexData } from "./services/db";
+import { offlineMediaStore } from "./services/offlineMediaStore";
 import { DedupeEngine, DedupeGroup } from "./services/dedupeEngine";
 import { PeopleEngine, PersonGroup } from "./services/peopleEngine";
 import { ThumbnailGenerator } from "./utils/thumbnailGenerator";
@@ -67,7 +70,6 @@ import {
   HardDrive,
   Clock,
   Lock,
-  Key,
   Flame,
   History,
   Download,
@@ -110,33 +112,17 @@ import {
   EventSummary,
   expandSmartQuery,
   SmartQuery,
-  hasAiApiKey,
 } from "./services/geminiService";
-import { AiApiKeyModal } from "./components/AiApiKeyModal";
-import { useAiApiKey } from "./hooks/useAiApiKey";
 import { CryptoEngine } from "./services/cryptoEngine";
 import { SystemAPI } from "./services/systemApi";
 import { BlurDetection } from "./utils/blurDetection";
 import { PWAInstallButton } from "./components/PWAInstallButton";
-import { AuditTab } from "./components/tabs/AuditTab";
-import { TrashTab } from "./components/tabs/TrashTab";
-import { DashboardTab } from "./components/tabs/DashboardTab";
-import { DuplicatesTab } from "./components/tabs/DuplicatesTab";
-import { PhotobookTab } from "./components/tabs/PhotobookTab";
-import { LibraryTab } from "./components/tabs/LibraryTab";
-import { PeopleTab } from "./components/tabs/PeopleTab";
+import { OfflineIndicator } from "./components/OfflineIndicator";
+import { SWUpdateToast } from "./components/SWUpdateToast";
 import { useScanner } from "./hooks/useScanner";
 import { useLibrary } from "./hooks/useLibrary";
 import { usePeople } from "./hooks/usePeople";
 import { Photo } from "./types";
-import { MemoriesTab } from "./components/tabs/MemoriesTab";
-import { LocationTab } from "./components/tabs/LocationTab";
-import { EngineTab } from "./components/tabs/EngineTab";
-import { EnhancementTab } from "./components/tabs/EnhancementTab";
-import { PrintTab } from "./components/tabs/PrintTab";
-import { SyncTab } from "./components/tabs/SyncTab";
-import { BurstTab } from "./components/tabs/BurstTab";
-import { SettingsTab } from "./components/tabs/SettingsTab";
 import { fileWatcherService } from "./services/fileWatcherService";
 import { idleSweeper } from "./services/idleSweeper";
 import { DiagnosticsDashboard } from "./components/DiagnosticsDashboard";
@@ -152,6 +138,32 @@ import { GlobalTooltip } from "./components/GlobalTooltip";
 import { AiVideoGeneratorModal } from "./components/AiVideoGeneratorModal";
 import { BeginnerGuideWizardModal, BeginnerWizardResult } from "./components/BeginnerGuideWizardModal";
 import { generateSamplePhotos } from "./services/photobookGenerator";
+
+const DashboardTab = lazy(() =>
+  import("./components/tabs/DashboardTab").then((m) => ({ default: m.DashboardTab }))
+);
+const DuplicatesTab = lazy(() =>
+  import("./components/tabs/DuplicatesTab").then((m) => ({ default: m.DuplicatesTab }))
+);
+const PhotobookTab = lazy(() =>
+  import("./components/tabs/PhotobookTab").then((m) => ({ default: m.PhotobookTab }))
+);
+const LibraryTab = lazy(() =>
+  import("./components/tabs/LibraryTab").then((m) => ({ default: m.LibraryTab }))
+);
+const TrashTab = lazy(() =>
+  import("./components/tabs/TrashTab").then((m) => ({ default: m.TrashTab }))
+);
+const SettingsTab = lazy(() =>
+  import("./components/tabs/SettingsTab").then((m) => ({ default: m.SettingsTab }))
+);
+
+const TabLoadingFallback = () => (
+  <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-400">
+    <Loader2 size={28} className="animate-spin text-indigo-400" />
+    <span className="text-xs font-medium tracking-wide">Loading workspace...</span>
+  </div>
+);
 
 // Components
 export default function App() {
@@ -172,14 +184,7 @@ export default function App() {
     ignoreCurrentVersion,
   } = useUpdateChecker();
 
-  const { isConfigured: isAiConfigured } = useAiApiKey();
-
-  // If AI key is removed while on an AI-only tab, redirect to duplicates
-  useEffect(() => {
-    if (!isAiConfigured && (activeTab === "people" || activeTab === "memories" || activeTab === "enhancement")) {
-      setActiveTab("duplicates");
-    }
-  }, [isAiConfigured, activeTab]);
+  const isAiConfigured = true;
 
   // Minimal 3 core menus: 중복 정리, 디지털 사진첩, 사진 보관함
   const navItems = useMemo(() => {
@@ -738,9 +743,7 @@ export default function App() {
   };
 
   const clearStorage = async () => {
-    await db.photos.clear();
-    await db.auditLogs.clear();
-    await db.events.clear();
+    await Promise.all([purgeAllLocalIndexData(), offlineMediaStore.clearAll()]);
     addNotification("Factory Reset", "Database has been purged.", "warning");
 
     // Phase 43.1: Force-refresh all data stores to flush UI
@@ -978,16 +981,8 @@ export default function App() {
   const [showSystemTray, setShowSystemTray] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
 
-  const [isAiKeyModalOpen, setIsAiKeyModalOpen] = useState(false);
-  const [aiKeyFeatureName, setAiKeyFeatureName] = useState<string | undefined>(undefined);
-
   const handleSmartSearch = async () => {
-    if (!searchQuery || !isOnline) return;
-    if (!hasAiApiKey()) {
-      setAiKeyFeatureName(language === "ko" ? "AI 스마트 검색" : "AI Smart Search");
-      setIsAiKeyModalOpen(true);
-      return;
-    }
+    if (!searchQuery) return;
     setIsProcessingSmartQuery(true);
     try {
       const result = await expandSmartQuery(searchQuery);
@@ -1643,39 +1638,10 @@ export default function App() {
             <span>{language === "ko" ? "앱 설치 / 다운로드" : "Install App"}</span>
           </button>
 
-          {isAiConfigured ? (
-            <button
-              onClick={() => {
-                setAiKeyFeatureName(undefined);
-                setIsAiKeyModalOpen(true);
-              }}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-400/40 transition-all font-semibold text-[10px] tracking-wide cursor-pointer shadow-xs shadow-purple-500/20"
-              title={
-                language === "ko"
-                  ? "AI 기능 활성화됨 (클릭하여 API 키 관리 및 해제)"
-                  : "AI Active (Click to manage or remove API key)"
-              }
-            >
-              <Sparkles size={11} className="text-purple-300 animate-pulse" />
-              <span>{language === "ko" ? "✨ AI 활성화됨" : "✨ AI Active"}</span>
-            </button>
-          ) : (
-            <button
-              onClick={() => {
-                setAiKeyFeatureName(undefined);
-                setIsAiKeyModalOpen(true);
-              }}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/5 hover:bg-purple-500/15 text-slate-300 hover:text-purple-200 border border-white/10 hover:border-purple-400/30 transition-all font-semibold text-[10px] tracking-wide cursor-pointer"
-              title={
-                language === "ko"
-                  ? "API 키를 등록하면 AI 전용 기능(인물 분류, 추억 앨범, 화질 복원, 스마트 검색)이 활성화됩니다"
-                  : "Register an API key to reveal AI features"
-              }
-            >
-              <Sparkles size={11} className="text-slate-400" />
-              <span>{language === "ko" ? "AI 기능 켜기 (API 키 등록)" : "Enable AI (API Key)"}</span>
-            </button>
-          )}
+          <span className="text-[10px] font-semibold text-purple-300 flex items-center gap-1">
+            <Sparkles size={11} className="text-purple-300" />
+            <span>{language === "ko" ? "AI 서버 프록시 활성" : "AI Proxy Active"}</span>
+          </span>
 
           <button
             onClick={() => setLanguage(language === "en" ? "ko" : "en")}
@@ -1828,46 +1794,14 @@ export default function App() {
                   key={`${item.id}-${idx}`}
                   onClick={() => {
                     setActiveTab(item.id);
-                    if (isAiTab && !isAiConfigured) {
-                      setAiKeyFeatureName(item.label);
-                      setIsAiKeyModalOpen(true);
-                    }
                   }}
                   className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${buttonClass}`}
                 >
                   <item.icon
                     size={18}
-                    className={
-                      isAiTab
-                        ? !isAiConfigured
-                          ? "text-amber-400 shrink-0"
-                          : "text-purple-400 shrink-0"
-                        : "shrink-0"
-                    }
+                    className={isAiTab ? "text-purple-400 shrink-0" : "shrink-0"}
                   />
                   <span className="font-medium truncate">{item.label}</span>
-
-                  {isAiTab && (
-                    <span
-                      className={`ml-auto text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1 shrink-0 ${
-                        !isAiConfigured
-                          ? "bg-amber-500/25 text-amber-300 border border-amber-500/40 animate-pulse"
-                          : "bg-purple-500/25 text-purple-300 border border-purple-500/30"
-                      }`}
-                    >
-                      {!isAiConfigured ? (
-                        <>
-                          <Key size={10} className="text-amber-400 shrink-0" />
-                          <span>{language === "ko" ? "Key 필요" : "Key Needed"}</span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles size={10} className="text-purple-300 shrink-0" />
-                          <span>AI</span>
-                        </>
-                      )}
-                    </span>
-                  )}
                 </button>
               );
             })}
@@ -2005,44 +1939,42 @@ export default function App() {
           </div>
         </aside>
 
-        <main className="flex-1 overflow-y-auto pb-32 lg:pb-0">
-          <header className="sticky top-0 z-30 flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 lg:p-6 bg-slate-950/90 backdrop-blur-2xl border-b border-white/10 shadow-xl mb-3 sm:mb-4 gap-3 sm:gap-4">
-            <div className="flex items-center justify-between sm:justify-start w-full sm:w-auto gap-3">
-              <div className="flex items-center gap-2.5">
-                <button
-                  className="lg:hidden p-2 bg-white/5 hover:bg-white/10 rounded-xl text-slate-300 hover:text-white transition-all cursor-pointer"
-                  onClick={() => setMobileMenuOpen(true)}
-                  title="Menu"
-                >
-                  <Menu size={20} />
-                </button>
-                <h2 className="text-lg sm:text-xl md:text-2xl font-black tracking-tight capitalize text-white">
-                  {t(activeTab as any)}
-                </h2>
-              </div>
+        <main className="flex-1 overflow-y-auto pb-24 lg:pb-0">
+          <OfflineIndicator language={language as 'ko' | 'en'} />
+          <header className="sticky top-0 z-30 flex items-center justify-between px-3 py-2 sm:p-4 lg:p-6 bg-slate-950/95 lg:bg-slate-950/90 lg:backdrop-blur-2xl border-b border-white/10 shadow-xl mb-3 sm:mb-4 gap-2 sm:gap-4 min-h-[56px]">
+            <div className="flex items-center gap-2 min-w-0">
+              <button
+                className="lg:hidden min-w-[44px] min-h-[44px] flex items-center justify-center bg-white/5 hover:bg-white/10 rounded-xl text-slate-300 hover:text-white transition-all cursor-pointer shrink-0"
+                onClick={() => setMobileMenuOpen(true)}
+                aria-label="Open menu"
+              >
+                <Menu size={20} />
+              </button>
+              <h2 className="text-base sm:text-xl md:text-2xl font-black tracking-tight capitalize text-white truncate">
+                {t(activeTab as any)}
+              </h2>
             </div>
 
-            <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 w-full sm:w-auto flex-wrap sm:flex-nowrap">
+            <div className="flex items-center justify-end gap-1.5 sm:gap-3 shrink-0">
               <button
                 type="button"
                 onClick={() => setShowBeginnerWizard(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 via-rose-500/15 to-indigo-500/20 hover:from-amber-500/30 hover:to-indigo-500/30 text-amber-200 border border-amber-500/40 font-bold text-xs shadow-md shadow-amber-500/10 transition-all cursor-pointer group shrink-0"
+                className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500/20 via-rose-500/15 to-indigo-500/20 hover:from-amber-500/30 hover:to-indigo-500/30 text-amber-200 border border-amber-500/40 font-bold text-xs shadow-md shadow-amber-500/10 transition-all cursor-pointer group shrink-0"
                 title={language === 'ko' ? "사용자 질문 마법사 열기" : "Open Guide Wizard"}
               >
                 <HelpCircle size={15} className="text-amber-400 group-hover:scale-110 transition-transform" />
-                <span className="hidden sm:inline font-bold">{language === 'ko' ? "질문으로 시작하기 (마법사)" : "Guide Wizard"}</span>
-                <span className="sm:hidden font-bold">{language === 'ko' ? "마법사" : "Wizard"}</span>
+                <span className="font-bold">{language === 'ko' ? "질문으로 시작하기 (마법사)" : "Guide Wizard"}</span>
               </button>
 
               <PWAInstallButton language={language} />
 
               {peerCount > 0 && (
                 <div
-                  className="shrink-0 flex items-center gap-2 px-2.5 py-1.5 rounded-xl border group cursor-help transition-all bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                  className="hidden sm:flex shrink-0 items-center gap-2 px-2.5 py-1.5 rounded-xl border group cursor-help transition-all bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
                   title="Cross-Device Heritage Sync Active"
                 >
                   <Wifi size={14} className="animate-pulse shrink-0" />
-                  <span className="text-[10px] font-black uppercase tracking-widest hidden md:inline whitespace-nowrap">
+                  <span className="text-[10px] font-black uppercase tracking-widest hidden md:inline whitespace-nowrap tabular-nums">
                     {peerCount === 1
                       ? "1 Peer Active"
                       : `${peerCount} Peers Active`}
@@ -2052,10 +1984,10 @@ export default function App() {
               )}
 
               {scanning && (
-                <div className="shrink-0 flex items-center gap-3 bg-slate-900/90 border border-indigo-500/30 shadow-2xl backdrop-blur-md px-3 sm:px-4 py-2 rounded-xl w-full max-w-[560px] animate-fade-in">
+                <div className="hidden md:flex shrink-0 items-center gap-3 bg-slate-900/90 border border-indigo-500/30 shadow-2xl px-4 py-2 rounded-xl max-w-[460px] animate-fade-in">
                   <div className="flex flex-col flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1 gap-2">
-                      <span className="text-[10px] sm:text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1 whitespace-nowrap">
+                      <span className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1 whitespace-nowrap">
                         {isPaused ? (
                           <Pause size={12} className="text-amber-400 shrink-0" />
                         ) : (
@@ -2063,7 +1995,7 @@ export default function App() {
                         )}
                         {isPaused ? "Scan Paused" : t("deepScanning")}
                       </span>
-                      <span className="text-[10px] sm:text-xs font-extrabold font-mono text-slate-100 tracking-tight bg-slate-950/60 px-2 py-0.5 rounded border border-white/5 whitespace-nowrap shrink-0">
+                      <span className="text-xs font-extrabold font-mono tabular-nums text-slate-100 tracking-tight bg-slate-950/60 px-2 py-0.5 rounded border border-white/5 whitespace-nowrap shrink-0">
                         <span className="text-blue-400">{scanStats.processed.toLocaleString()}</span>
                         <span className="text-slate-500 mx-1">/</span>
                         <span className="text-slate-300">{scanStats.total > 0 ? scanStats.total.toLocaleString() : "..."}</span>
@@ -2091,7 +2023,7 @@ export default function App() {
                         title={language === "ko" ? "AI 정밀분석 건너뛰기" : "Skip AI Deep Scan"}
                       >
                         <FastForward size={13} fill="currentColor" />
-                        <span className="hidden md:inline">{language === "ko" ? "건너뛰기" : "Skip"}</span>
+                        <span className="hidden lg:inline">{language === "ko" ? "건너뛰기" : "Skip"}</span>
                       </button>
                     )}
                     {isPaused ? (
@@ -2123,10 +2055,10 @@ export default function App() {
                 </div>
               )}
 
-              <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 <button
                   onClick={() => setShowScanSettings(!showScanSettings)}
-                  className={`flex-1 sm:flex-initial px-3 py-2 rounded-xl border transition-all cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold ${
+                  className={`min-w-[44px] min-h-[44px] px-2.5 sm:px-3 py-2 rounded-xl border transition-all cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold ${
                     showScanSettings
                       ? "bg-indigo-500/20 border-indigo-500/40 text-indigo-300"
                       : "bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10"
@@ -2137,19 +2069,10 @@ export default function App() {
                       : "Scan Settings (File formats & Quick/Deep mode)"
                   }
                 >
-                  <SlidersHorizontal size={15} className="shrink-0 text-indigo-400" />
-                  <span className="whitespace-nowrap">
+                  <SlidersHorizontal size={16} className="shrink-0 text-indigo-400" />
+                  <span className="hidden sm:inline whitespace-nowrap">
                     {language === "ko" ? "스캔 설정" : "Settings"}
                   </span>
-                  {scanFormats.length < 22 ? (
-                    <span className="shrink-0 bg-indigo-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full flex items-center justify-center">
-                      {scanFormats.length}
-                    </span>
-                  ) : (
-                    <span className="shrink-0 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold px-1.5 py-0.2 rounded-full flex items-center justify-center whitespace-nowrap">
-                      {language === "ko" ? "전체" : "All"}
-                    </span>
-                  )}
                 </button>
 
                 <button
@@ -2159,7 +2082,7 @@ export default function App() {
                       : handleSelectDirectory()
                   }
                   disabled={scanning || scanFormats.length === 0}
-                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-3.5 py-2 rounded-xl text-xs font-black shadow-lg shadow-indigo-600/25 cursor-pointer transition-all active:scale-95"
+                  className="min-h-[44px] flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-black shadow-lg shadow-indigo-600/25 cursor-pointer transition-all active:scale-95"
                 >
                   {scanning ? (
                     <RefreshCw className="shrink-0 animate-spin" size={15} />
@@ -2346,125 +2269,124 @@ export default function App() {
               </div>
             )}
 
-            {activeTab === "dashboard" && (
-              <DashboardTab
-                memoryMoment={memoryMoment}
-                setSelectedPhotoId={setSelectedPhotoId}
-                dbCount={dbCount}
-                totalWaste={
-                  sortedGroups.reduce(
-                    (acc, g) => acc + (g.redundantSize || 0),
-                    0,
-                  ) + trashPhotos.reduce((acc, p) => acc + p.size, 0)
-                }
-                groups={sortedGroups}
-                categoryStats={categoryStats}
-                formatStats={formatStats}
-                dateStats={dateStats}
-                onOpenPhotobook={() => setActiveTab("photobook")}
-              />
-            )}
+            <Suspense fallback={<TabLoadingFallback />}>
+              {activeTab === "dashboard" && (
+                <DashboardTab
+                  memoryMoment={memoryMoment}
+                  setSelectedPhotoId={setSelectedPhotoId}
+                  dbCount={dbCount}
+                  totalWaste={
+                    sortedGroups.reduce(
+                      (acc, g) => acc + (g.redundantSize || 0),
+                      0,
+                    ) + trashPhotos.reduce((acc, p) => acc + p.size, 0)
+                  }
+                  groups={sortedGroups}
+                  categoryStats={categoryStats}
+                  formatStats={formatStats}
+                  dateStats={dateStats}
+                  onOpenPhotobook={() => setActiveTab("photobook")}
+                />
+              )}
 
-            {activeTab === "duplicates" && (
-              <DuplicatesTab
-                type="exact"
-                sortedGroups={sortedGroups}
-                autoResolveRule={autoResolveRule}
-                setAutoResolveRule={setAutoResolveRule}
-                dupSortBy={dupSortBy}
-                setDupSortBy={setDupSortBy}
-                organizeDuplicates={organizeDuplicates}
-                orgTargetFolder={orgTargetFolder}
-                resolveAllGroups={resolveAllGroups}
-                resolveDuplicate={resolveDuplicate}
-                backupEnabled={backupEnabled}
-                setBackupEnabled={setBackupEnabled}
-                backupFolder={backupFolder}
-                setBackupFolder={setBackupFolder}
-                selectedPhotoId={selectedPhotoId}
-                setSelectedPhotoId={setSelectedPhotoId}
-                addNotification={addNotification}
-                directoryTree={directoryTree}
-                originalHandling={originalHandling}
-                setOriginalHandling={setOriginalHandling}
-                isAiConfigured={isAiConfigured}
-                dedupeOptions={dedupeOptions}
-                setDedupeOptions={setDedupeOptions}
-                onRescanDuplicates={detectDuplicates}
-                onCreatePhotobook={() => setActiveTab("photobook")}
-                onAnimatePhoto={setAnimatingPhoto}
-              />
-            )}
+              {activeTab === "duplicates" && (
+                <DuplicatesTab
+                  type="exact"
+                  sortedGroups={sortedGroups}
+                  autoResolveRule={autoResolveRule}
+                  setAutoResolveRule={setAutoResolveRule}
+                  dupSortBy={dupSortBy}
+                  setDupSortBy={setDupSortBy}
+                  organizeDuplicates={organizeDuplicates}
+                  orgTargetFolder={orgTargetFolder}
+                  resolveAllGroups={resolveAllGroups}
+                  resolveDuplicate={resolveDuplicate}
+                  backupEnabled={backupEnabled}
+                  setBackupEnabled={setBackupEnabled}
+                  backupFolder={backupFolder}
+                  setBackupFolder={setBackupFolder}
+                  selectedPhotoId={selectedPhotoId}
+                  setSelectedPhotoId={setSelectedPhotoId}
+                  addNotification={addNotification}
+                  directoryTree={directoryTree}
+                  originalHandling={originalHandling}
+                  setOriginalHandling={setOriginalHandling}
+                  isAiConfigured={isAiConfigured}
+                  dedupeOptions={dedupeOptions}
+                  setDedupeOptions={setDedupeOptions}
+                  onRescanDuplicates={detectDuplicates}
+                  onCreatePhotobook={() => setActiveTab("photobook")}
+                  onAnimatePhoto={setAnimatingPhoto}
+                />
+              )}
 
-            {activeTab === "photobook" && (
-              <PhotobookTab
-                libraryPhotos={libraryPhotos}
-                isAiConfigured={isAiConfigured}
-                onOpenAiKeyModal={() => {
-                  setAiKeyFeatureName(language === "ko" ? "AI 감성 스토리 작가" : "AI Storyteller");
-                  setIsAiKeyModalOpen(true);
-                }}
-                onSwitchToDuplicates={() => setActiveTab("duplicates")}
-                onAnimatePhoto={setAnimatingPhoto}
-              />
-            )}
+              {activeTab === "photobook" && (
+                <PhotobookTab
+                  libraryPhotos={libraryPhotos}
+                  isAiConfigured={isAiConfigured}
+                  onOpenAiKeyModal={() => {}}
+                  onSwitchToDuplicates={() => setActiveTab("duplicates")}
+                  onAnimatePhoto={setAnimatingPhoto}
+                />
+              )}
 
-            {activeTab === "library" && (
-              <LibraryTab
-                smartQuery={smartQuery}
-                searchQuery={searchQuery}
-                setSearchQuery={setSearchQuery}
-                handleSmartSearch={handleSmartSearch}
-                isProcessingSmartQuery={isProcessingSmartQuery}
-                isOnline={true}
-                isAiConfigured={isAiConfigured}
-                syncing={syncing}
-                handleSyncLibrary={handleSyncLibrary}
-                categoryStats={categoryStats}
-                selectedCategories={selectedCategories}
-                setSelectedCategories={setSelectedCategories}
-                selectedQualityTags={selectedQualityTags}
-                setSelectedQualityTags={setSelectedQualityTags}
-                selectedFormats={selectedFormats}
-                setSelectedFormats={setSelectedFormats}
-                dateStats={dateStats}
-                selectedYears={selectedYears}
-                setSelectedYears={setSelectedYears}
-                locations={locations}
-                selectedLocations={selectedLocations}
-                setSelectedLocations={setSelectedLocations}
-                handleSelectLocation={handleSelectLocation}
-                selectedSizes={selectedSizes}
-                setSelectedSizes={setSelectedSizes}
-                selectedOrientations={selectedOrientations}
-                setSelectedOrientations={setSelectedOrientations}
-                cameraModels={cameraModels}
-                selectedCameras={selectedCameras}
-                setSelectedCameras={setSelectedCameras}
-                filteredLibraryPhotos={filteredLibraryPhotos}
-                selectedPhotoIds={selectedPhotoIds}
-                setSelectedPhotoIds={setSelectedPhotoIds}
-                showMap={showMap}
-                setShowMap={setShowMap}
-                libraryPhotos={libraryPhotos}
-                isMultiSelectMode={isMultiSelectMode}
-                setIsMultiSelectMode={setIsMultiSelectMode}
-                taggingProgress={taggingProgress}
-                handleBulkTagging={handleBulkTagging}
-                handleEnhance={handleEnhance}
-                handleContextMenu={(e, id) => {
-                  const photo = libraryPhotos.find((p) => p.id === id);
-                  if (photo) handleContextMenu(e, photo);
-                }}
-                setSelectedPhotoId={setSelectedPhotoId}
-                selectedPhotoId={selectedPhotoId}
-                setModal={setModal}
-                handleOrganize={handleOrganize}
-                handleBatchRename={handleBatchRename}
-                addNotification={addNotification}
-                onAnimatePhoto={setAnimatingPhoto}
-              />
-            )}
+              {activeTab === "library" && (
+                <LibraryTab
+                  smartQuery={smartQuery}
+                  searchQuery={searchQuery}
+                  setSearchQuery={setSearchQuery}
+                  handleSmartSearch={handleSmartSearch}
+                  isProcessingSmartQuery={isProcessingSmartQuery}
+                  isOnline={isOnline}
+                  isAiConfigured={isAiConfigured}
+                  syncing={syncing}
+                  handleSyncLibrary={handleSyncLibrary}
+                  categoryStats={categoryStats}
+                  selectedCategories={selectedCategories}
+                  setSelectedCategories={setSelectedCategories}
+                  selectedQualityTags={selectedQualityTags}
+                  setSelectedQualityTags={setSelectedQualityTags}
+                  selectedFormats={selectedFormats}
+                  setSelectedFormats={setSelectedFormats}
+                  dateStats={dateStats}
+                  selectedYears={selectedYears}
+                  setSelectedYears={setSelectedYears}
+                  locations={locations}
+                  selectedLocations={selectedLocations}
+                  setSelectedLocations={setSelectedLocations}
+                  handleSelectLocation={handleSelectLocation}
+                  selectedSizes={selectedSizes}
+                  setSelectedSizes={setSelectedSizes}
+                  selectedOrientations={selectedOrientations}
+                  setSelectedOrientations={setSelectedOrientations}
+                  cameraModels={cameraModels}
+                  selectedCameras={selectedCameras}
+                  setSelectedCameras={setSelectedCameras}
+                  filteredLibraryPhotos={filteredLibraryPhotos}
+                  selectedPhotoIds={selectedPhotoIds}
+                  setSelectedPhotoIds={setSelectedPhotoIds}
+                  showMap={showMap}
+                  setShowMap={setShowMap}
+                  libraryPhotos={libraryPhotos}
+                  isMultiSelectMode={isMultiSelectMode}
+                  setIsMultiSelectMode={setIsMultiSelectMode}
+                  taggingProgress={taggingProgress}
+                  handleBulkTagging={handleBulkTagging}
+                  handleEnhance={handleEnhance}
+                  handleContextMenu={(e, id) => {
+                    const photo = libraryPhotos.find((p) => p.id === id);
+                    if (photo) handleContextMenu(e, photo);
+                  }}
+                  setSelectedPhotoId={setSelectedPhotoId}
+                  selectedPhotoId={selectedPhotoId}
+                  setModal={setModal}
+                  handleOrganize={handleOrganize}
+                  handleBatchRename={handleBatchRename}
+                  addNotification={addNotification}
+                  onAnimatePhoto={setAnimatingPhoto}
+                />
+              )}
+            </Suspense>
 
             {activeTab === "people" && isAiConfigured && (
               <div className="space-y-8">
@@ -2614,28 +2536,30 @@ export default function App() {
               </div>
             )}
 
-            {activeTab === "trash" && (
-              <TrashTab
-                trashPhotos={trashPhotos}
-                lastPurged={lastPurged}
-                emptyTrash={emptyTrash}
-                undoEmptyTrash={undoEmptyTrash}
-                setModal={setModal}
-                detectDuplicates={detectDuplicates}
-                airGappedMode={airGappedMode}
-                addNotification={addNotification}
-              />
-            )}
+            <Suspense fallback={<TabLoadingFallback />}>
+              {activeTab === "trash" && (
+                <TrashTab
+                  trashPhotos={trashPhotos}
+                  lastPurged={lastPurged}
+                  emptyTrash={emptyTrash}
+                  undoEmptyTrash={undoEmptyTrash}
+                  setModal={setModal}
+                  detectDuplicates={detectDuplicates}
+                  airGappedMode={airGappedMode}
+                  addNotification={addNotification}
+                />
+              )}
 
-            {activeTab === "settings" && (
-              <SettingsTab
-                addNotification={addNotification}
-                quickScanMode={quickScanMode}
-                setQuickScanMode={setQuickScanMode}
-                scanFormats={scanFormats}
-                setScanFormats={setScanFormats}
-              />
-            )}
+              {activeTab === "settings" && (
+                <SettingsTab
+                  addNotification={addNotification}
+                  quickScanMode={quickScanMode}
+                  setQuickScanMode={setQuickScanMode}
+                  scanFormats={scanFormats}
+                  setScanFormats={setScanFormats}
+                />
+              )}
+            </Suspense>
           </div>
         </main>
 
@@ -2734,18 +2658,19 @@ export default function App() {
           {showScanSettings && (
             <div
               key="scan-settings-overlay"
-              className="fixed inset-0 z-[500] flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto"
+              className="fixed inset-0 z-[500] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/80 sm:backdrop-blur-md overflow-y-auto"
               onClick={(e) => {
                 if (e.target === e.currentTarget) setShowScanSettings(false);
               }}
             >
               <motion.div
-                initial={{ scale: 0.95, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.95, opacity: 0 }}
+                initial={{ scale: 0.98, opacity: 0, y: 24 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.98, opacity: 0, y: 24 }}
                 transition={{ type: "spring", duration: 0.25 }}
-                className="relative w-full max-w-lg max-h-[92dvh] sm:max-h-[88dvh] p-4 sm:p-6 rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl flex flex-col z-[501] overflow-hidden my-auto"
+                className="relative w-full max-w-lg max-h-[90dvh] sm:max-h-[88dvh] p-4 sm:p-6 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pb-6 rounded-t-3xl sm:rounded-3xl bg-slate-900 border-t sm:border border-slate-800 shadow-2xl flex flex-col z-[501] overflow-hidden sm:my-auto"
               >
+                <div className="w-10 h-1 rounded-full bg-white/20 mx-auto mb-3 shrink-0 sm:hidden" />
                 {/* Pinned Header */}
                 <div className="flex items-center justify-between pb-3 border-b border-white/10 shrink-0">
                   <div className="flex items-center gap-2">
@@ -4295,7 +4220,10 @@ export default function App() {
         </AnimatePresence>
 
         {/* Thumb-Friendly Mobile Bottom Navigation Bar */}
-        <div className="lg:hidden fixed bottom-2 left-2 right-2 z-40 bg-slate-950/90 backdrop-blur-2xl border border-white/10 p-1.5 rounded-2xl flex justify-around items-center shadow-[0_10px_30px_rgba(0,0,0,0.8)] pb-[calc(0.375rem+env(safe-area-inset-bottom))]">
+        <nav
+          aria-label="Mobile Navigation"
+          className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 border-t border-white/10 px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] flex justify-around items-center shadow-[0_-8px_24px_rgba(0,0,0,0.65)]"
+        >
           {[
             {
               id: "duplicates",
@@ -4305,17 +4233,12 @@ export default function App() {
             {
               id: "photobook",
               icon: BookOpen,
-              label: language === "ko" ? "디지털 사진첩" : "Photobook",
+              label: language === "ko" ? "사진첩" : "Photobook",
             },
             {
               id: "library",
               icon: ImageIcon,
               label: language === "ko" ? "보관함" : "Library",
-            },
-            {
-              id: "settings",
-              icon: Settings,
-              label: language === "ko" ? "설정" : "Settings",
             },
           ].map((tab) => {
             const isActive = activeTab === tab.id;
@@ -4323,21 +4246,21 @@ export default function App() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-all cursor-pointer flex-1 gap-1 min-h-[44px] ${
+                className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-xl transition-all cursor-pointer flex-1 gap-1 min-h-[48px] ${
                   isActive
-                    ? "text-white bg-indigo-600/30 font-bold border border-indigo-500/30 shadow-md shadow-indigo-500/10"
-                    : "text-slate-400 hover:text-slate-200 border border-transparent"
+                    ? "text-white font-bold"
+                    : "text-slate-400 hover:text-slate-200"
                 }`}
               >
                 <tab.icon
-                  size={18}
+                  size={20}
                   className={
                     isActive
-                      ? "text-indigo-400 scale-110 transition-transform"
+                      ? "text-indigo-400 scale-105 transition-transform"
                       : "text-slate-400"
                   }
                 />
-                <span className="text-[10px] tracking-tight truncate font-sans font-medium max-w-[64px]">
+                <span className="text-[11px] tracking-tight truncate font-sans font-medium max-w-[72px]">
                   {tab.label}
                 </span>
               </button>
@@ -4346,14 +4269,14 @@ export default function App() {
 
           <button
             onClick={() => setMobileMenuOpen(true)}
-            className="flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-slate-400 hover:text-slate-200 border border-transparent flex-1 gap-1 cursor-pointer min-h-[44px]"
+            className="flex flex-col items-center justify-center py-1.5 px-2 rounded-xl text-slate-400 hover:text-slate-200 flex-1 gap-1 cursor-pointer min-h-[48px]"
           >
-            <Menu size={18} />
-            <span className="text-[10px] tracking-tight font-sans font-medium">
+            <Menu size={20} />
+            <span className="text-[11px] tracking-tight font-sans font-medium">
               {language === "ko" ? "더 보기" : "More"}
             </span>
           </button>
-        </div>
+        </nav>
 
         {/* Mobile Navigation Drawer */}
         <AnimatePresence>
@@ -4386,7 +4309,8 @@ export default function App() {
                   </div>
                   <button
                     onClick={() => setMobileMenuOpen(false)}
-                    className="p-2 bg-white/5 rounded-xl text-slate-400 hover:text-white"
+                    className="min-w-[44px] min-h-[44px] flex items-center justify-center bg-white/5 rounded-xl text-slate-400 hover:text-white"
+                    aria-label="Close drawer"
                   >
                     <X size={20} />
                   </button>
@@ -4394,82 +4318,25 @@ export default function App() {
 
                 <nav className="flex flex-col gap-2 flex-1 overflow-y-auto pr-2 custom-scrollbar pb-10">
                   {navItems.map((item, idx) => {
-                    const isAiTab = Boolean(item.isAi);
                     const isActive = activeTab === item.id;
-
-                    let buttonClass = "";
-                    if (isActive) {
-                      if (isAiTab && !isAiConfigured) {
-                        buttonClass =
-                          "bg-amber-500/20 text-amber-200 border border-amber-500/50 shadow-lg font-bold";
-                      } else if (isAiTab && isAiConfigured) {
-                        buttonClass =
-                          "bg-purple-600 text-white border border-purple-400/40 shadow-lg font-bold";
-                      } else {
-                        buttonClass =
-                          "bg-blue-600/20 text-blue-400 font-bold border border-blue-500/30";
-                      }
-                    } else {
-                      if (isAiTab && !isAiConfigured) {
-                        buttonClass =
-                          "bg-amber-500/10 hover:bg-amber-500/20 text-amber-300/90 border border-amber-500/25";
-                      } else if (isAiTab && isAiConfigured) {
-                        buttonClass =
-                          "bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20";
-                      } else {
-                        buttonClass =
-                          "hover:bg-white/5 text-slate-400 hover:text-slate-200 border border-transparent";
-                      }
-                    }
-
                     return (
                       <button
                         key={`mobile-nav-${item.id}-${idx}`}
                         onClick={() => {
                           setActiveTab(item.id);
                           setMobileMenuOpen(false);
-                          if (isAiTab && !isAiConfigured) {
-                            setAiKeyFeatureName(item.label);
-                            setIsAiKeyModalOpen(true);
-                          }
                         }}
-                        className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${buttonClass}`}
+                        className={`flex items-center gap-3 px-4 min-h-[46px] rounded-xl transition-all ${
+                          isActive
+                            ? "bg-blue-600/20 text-blue-400 font-bold border border-blue-500/30"
+                            : "hover:bg-white/5 text-slate-400 hover:text-slate-200 border border-transparent"
+                        }`}
                       >
                         <item.icon
                           size={18}
-                          className={
-                            isAiTab
-                              ? !isAiConfigured
-                                ? "text-amber-400 shrink-0"
-                                : "text-purple-400 shrink-0"
-                              : isActive
-                                ? "stroke-[2.5px]"
-                                : "shrink-0"
-                          }
+                          className={isActive ? "stroke-[2.5px] shrink-0" : "shrink-0"}
                         />
                         <span className="font-medium truncate">{item.label}</span>
-
-                        {isAiTab && (
-                          <span
-                            className={`ml-auto text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1 shrink-0 ${
-                              !isAiConfigured
-                                ? "bg-amber-500/25 text-amber-300 border border-amber-500/40 animate-pulse"
-                                : "bg-purple-500/25 text-purple-300 border border-purple-500/30"
-                            }`}
-                          >
-                            {!isAiConfigured ? (
-                              <>
-                                <Key size={10} className="text-amber-400 shrink-0" />
-                                <span>{language === "ko" ? "Key 필요" : "Key Needed"}</span>
-                              </>
-                            ) : (
-                              <>
-                                <Sparkles size={10} className="text-purple-300 shrink-0" />
-                                <span>AI</span>
-                              </>
-                            )}
-                          </span>
-                        )}
                       </button>
                     );
                   })}
@@ -4643,12 +4510,6 @@ export default function App() {
           onIgnoreVersion={ignoreCurrentVersion}
         />
 
-        <AiApiKeyModal
-          isOpen={isAiKeyModalOpen}
-          onClose={() => setIsAiKeyModalOpen(false)}
-          featureName={aiKeyFeatureName}
-        />
-
         <ScanSourceModal
           isOpen={showScanSourceModal}
           onClose={() => setShowScanSourceModal(false)}
@@ -4668,6 +4529,8 @@ export default function App() {
           onExecute={handleExecuteWizardAction}
           photoCount={dbCount}
         />
+
+        <SWUpdateToast language={language as 'ko' | 'en'} />
 
         {/* Global Floating Tooltip Engine */}
         <GlobalTooltip />

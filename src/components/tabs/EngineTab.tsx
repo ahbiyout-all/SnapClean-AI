@@ -15,7 +15,6 @@ import {
   Settings2,
   AlertCircle,
   Sparkles,
-  Key,
   AlertTriangle,
   RotateCcw,
   Download,
@@ -29,7 +28,6 @@ import {
 import { useI18n } from '../../i18n/context';
 import { SystemAPI } from '../../services/systemApi';
 import { motion } from 'motion/react';
-import { useAiApiKey } from '../../hooks/useAiApiKey';
 import { EngineTelemetryDashboard } from '../EngineTelemetryDashboard';
 import { GitHubUpdateCard } from '../GitHubUpdateCard';
 
@@ -61,11 +59,10 @@ export const EngineTab = ({
   refreshDBCount,
   scanSpeed,
   setScanSpeed,
-  onOpenAiKeyModal,
   onPurgeLocalIndex
 }: EngineTabProps) => {
   const { language, t } = useI18n();
-  const { isConfigured: isAiConfigured } = useAiApiKey();
+  const isAiConfigured = true;
 
   const [startupAutoScan, setStartupAutoScan] = React.useState(() => {
     return localStorage.getItem('snapclean_startup_autoscan') === 'true';
@@ -392,38 +389,29 @@ export const EngineTab = ({
             ))}
           </div>
 
-          {/* Gemini AI API Key Management Card */}
+          {/* Server AI Proxy Status Card */}
           <div className="glass p-6 md:p-8 rounded-[2.5rem] border border-indigo-500/20 bg-linear-to-br from-indigo-950/30 via-slate-900/40 to-slate-950/50 mt-6 relative overflow-hidden">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 bg-indigo-500/10 rounded-2xl flex items-center justify-center text-indigo-400 border border-indigo-500/20 shrink-0">
-                  <Sparkles size={24} className="animate-pulse" />
+                  <Sparkles size={24} />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-bold text-white tracking-tight">
-                      {language === 'ko' ? 'Gemini AI API 키 설정 및 활성화' : 'Gemini AI API Key Setup & Activation'}
+                      {language === 'ko' ? '서버 AI 프록시 연동 (Gemini 4)' : 'Server AI Proxy Integration (Gemini 4)'}
                     </h3>
-                    <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border ${isAiConfigured ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border-amber-500/30'}`}>
-                      {isAiConfigured ? (language === 'ko' ? 'AI 활성화됨' : 'AI ACTIVE') : (language === 'ko' ? 'AI 키 필요' : 'KEY REQUIRED')}
+                    <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-md border bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+                      {isAiConfigured ? (language === 'ko' ? '활성화됨' : 'ACTIVE') : 'STANDBY'}
                     </span>
                   </div>
                   <p className="text-xs text-slate-400 mt-1">
                     {language === 'ko'
-                      ? '사용자 본인의 Gemini API 키를 등록하면 AI 스마트 검색, 라이브러리 내레이션, 이미지 분석 및 AI 스토리 생성이 전체 활성화됩니다.'
-                      : 'Registering your Gemini API Key unlocks AI Smart Search, Library Story Narration, Vision Analysis, and AI Story generation.'}
+                      ? 'AI 스마트 검색, 스토리 캡션 재작성, 비전 분석 및 영상 생성이 서버 프록시(/api/ai/*)와 오프라인 Outbox 큐를 통해 안전하게 처리됩니다.'
+                      : 'AI Smart Search, Story Caption rewriting, Vision Analysis, and video generation run securely via server proxy routes and offline Outbox queuing.'}
                   </p>
                 </div>
               </div>
-              <button
-                onClick={onOpenAiKeyModal}
-                className="px-5 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-indigo-600/30 flex items-center gap-2 shrink-0 cursor-pointer"
-              >
-                <Key size={16} />
-                {isAiConfigured
-                  ? (language === 'ko' ? 'API 키 관리 / 변경' : 'Manage API Key')
-                  : (language === 'ko' ? 'API 키 입력 및 활성화' : 'Input Key & Activate')}
-              </button>
             </div>
           </div>
 

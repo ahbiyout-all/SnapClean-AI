@@ -7,6 +7,7 @@
 
 import { PhotoRecord } from './db';
 import { mobileWorkerPool } from './mobileWorkerPool';
+import { offlineMediaStore } from './offlineMediaStore';
 
 export type FastViewMode = 'pc' | 'mobile' | 'auto';
 
@@ -440,12 +441,13 @@ export class FastViewEngine {
           }
         } catch {}
 
-        try {
+          try {
           const downsampled = await this.fastDownsampleBlob(file, 256, 256);
           const url = URL.createObjectURL(downsampled);
           this.saveToL1(key, url);
           this.stats.canvasRendered++;
           this.extractDominantColorFromBlob(downsampled, key);
+          offlineMediaStore.saveThumbnail(key, downsampled).catch(() => {});
           return {
             url,
             source: 'canvas_fast_downsample',
@@ -465,7 +467,26 @@ export class FastViewEngine {
       }
     }
 
-    // D. Server stream endpoint fallback
+    // D. Persistent IndexedDB / OPFS Offline Thumbnail Cache (survives mobile reloads & offline state)
+    if (photo.path) {
+      try {
+        const persistedUrl = await offlineMediaStore.getThumbnailUrl(photo.path);
+        if (persistedUrl) {
+          this.saveToL1(key, persistedUrl);
+          this.stats.l2Hits++;
+          return {
+            url: persistedUrl,
+            source: 'blob_direct',
+            latencyMs: Number((performance.now() - startTime).toFixed(2)),
+            dominantColor: this.getInstantDominantColor(key),
+          };
+        }
+      } catch {
+        // continue to server stream fallback
+      }
+    }
+
+    // E. Server stream endpoint fallback
     this.stats.misses++;
     const serverUrl = `/api/system/thumbnail?path=${encodeURIComponent(photo.path || '')}`;
     return {

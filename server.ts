@@ -27,18 +27,11 @@ async function startServer() {
   const publicDir = path.join(process.cwd(), "public");
   app.use(express.static(publicDir));
 
-  // Explicit PWA manifest & service worker routes with CORS and correct content types
+  // Explicit PWA manifest route (Workbox sw.js is served by Vite dev middleware / dist static output)
   app.get("/manifest.json", (req, res) => {
     res.setHeader("Content-Type", "application/manifest+json; charset=utf-8");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.sendFile(path.join(publicDir, "manifest.json"));
-  });
-
-  app.get("/sw.js", (req, res) => {
-    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-    res.setHeader("Service-Worker-Allowed", "/");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.sendFile(path.join(publicDir, "sw.js"));
   });
 
   // Helper for Gemini AI instance
@@ -87,7 +80,7 @@ async function startServer() {
       Also provide a one-word mood.`;
 
       const response = await client.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-4-hydrogen",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -157,7 +150,7 @@ async function startServer() {
       });
 
       const response = await client.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-4-hydrogen",
         contents: { parts: contents },
         config: {
           responseMimeType: "application/json",
@@ -212,7 +205,7 @@ async function startServer() {
       Query: "${query}"`;
 
       const response = await client.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-4-hydrogen",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -263,7 +256,7 @@ async function startServer() {
       Return as a JSON object where keys are person names, and values are arrays of photo IDs.`;
 
       const response = await client.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-4-hydrogen",
         contents: prompt,
         config: {
           responseMimeType: "application/json"
@@ -340,7 +333,7 @@ ${JSON.stringify(photoDetails, null, 2)}
 }`;
 
       const response = await client.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-4-hydrogen",
         contents: prompt,
         config: {
           responseMimeType: "application/json"
@@ -373,7 +366,7 @@ ${JSON.stringify(photoDetails, null, 2)}
 반드시 JSON 형식 {"caption": "작성된 캡션"} 으로만 응답하세요.`;
 
       const response = await client.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-4-hydrogen",
         contents: prompt,
         config: {
           responseMimeType: "application/json"
@@ -384,6 +377,78 @@ ${JSON.stringify(photoDetails, null, 2)}
       return res.json({ success: true, data: parsed });
     } catch (_err) {
       return res.json({ success: false, fallback: fallbackCaption, data: { caption: fallbackCaption } });
+    }
+  });
+
+  // AI Route: Direct Caption Rewriter (used by rewritePhotobookCaption)
+  app.post("/api/ai/rewrite-caption", async (req, res) => {
+    const { meta = {}, tone = "lyrical", currentCaption = "", customApiKey } = req.body || {};
+    const effectiveKey = customApiKey || (req.headers["x-custom-api-key"] as string) || process.env.GEMINI_API_KEY;
+    const fallback = currentCaption || "마음 깊이 오래도록 간직하고픈 아름다운 한 컷";
+
+    if (!effectiveKey) {
+      return res.json({ success: false, fallback });
+    }
+
+    try {
+      const client = getGeminiClient(effectiveKey);
+      const prompt = `사진 메타데이터(${JSON.stringify(meta)})와 톤앤매너(${tone})를 바탕으로 한 줄 감성 캡션(20자 내외)을 JSON {"caption": "..."} 형식으로 작성하세요. 기존 캡션 참고: "${currentCaption}"`;
+
+      const response = await client.models.generateContent({
+        model: "gemini-4-hydrogen",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const parsed = JSON.parse(response.text || "{}");
+      return res.json({ success: true, data: parsed.caption || fallback });
+    } catch (_err) {
+      return res.json({ success: false, fallback });
+    }
+  });
+
+  // AI Route: Irrelevant / Receipt / Screenshot Relevance Filter
+  app.post("/api/ai/filter-relevance", async (req, res) => {
+    const { photos = [], albumTitle = "", customApiKey } = req.body || {};
+    const effectiveKey = customApiKey || (req.headers["x-custom-api-key"] as string) || process.env.GEMINI_API_KEY;
+
+    const fallbackIds = (Array.isArray(photos) ? photos : [])
+      .filter((p: any) => {
+        const isDoc = p.category?.toLowerCase() === "document" || p.category?.toLowerCase() === "receipt";
+        const isLow = (p.aestheticScore ?? 5) < 3.5;
+        const hasJunkTag = Array.isArray(p.tags) && p.tags.some((t: string) => ["screenshot", "receipt", "document", "form"].includes(String(t).toLowerCase()));
+        return isDoc || isLow || hasJunkTag;
+      })
+      .map((p: any) => p.id);
+
+    if (!effectiveKey) {
+      return res.json({ success: false, fallback: { irrelevantPhotoIds: fallbackIds, reasons: {} } });
+    }
+
+    try {
+      const client = getGeminiClient(effectiveKey);
+      const prompt = `Identify photo IDs irrelevant to a cherished memory photobook titled "${albumTitle}" (e.g., receipts, forms, screenshots, unreadable clutter). Photos: ${JSON.stringify(photos)}. Return JSON {"irrelevantPhotoIds": [...], "reasons": {"id": "reason"}}.`;
+
+      const response = await client.models.generateContent({
+        model: "gemini-4-hydrogen",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const parsed = JSON.parse(response.text || "{}");
+      return res.json({
+        success: true,
+        data: {
+          irrelevantPhotoIds: Array.isArray(parsed.irrelevantPhotoIds) ? parsed.irrelevantPhotoIds : fallbackIds,
+          reasons: parsed.reasons || {}
+        }
+      });
+    } catch (_err) {
+      return res.json({ success: false, fallback: { irrelevantPhotoIds: fallbackIds, reasons: {} } });
     }
   });
 
@@ -403,7 +468,7 @@ ${JSON.stringify(photoDetails, null, 2)}
       const cleanBase64 = imageData.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
 
       const interaction = await client.interactions.create({
-        model: 'gemini-omni-1.1-flash',
+        model: 'gemini-omni-1.2-flash',
         input: [
           {
             type: "image",

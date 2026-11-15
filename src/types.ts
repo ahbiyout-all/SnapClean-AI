@@ -85,6 +85,8 @@ export interface PhotobookChapter {
   title: string;
   subtitle?: string;
   prologue?: string;
+  caption?: string;
+  aiCaption?: string;
   timeRange?: { start: number; end: number };
   locationName?: string;
   heroPhotoPath?: string;

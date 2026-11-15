@@ -1,58 +1,188 @@
-const KEY_STORAGE_NAME = "snapclean_user_gemini_api_key";
+import { db } from './db';
+
 export const API_KEY_CHANGE_EVENT = "snapclean_ai_key_changed";
+export const AI_OUTBOX_UPDATED_EVENT = "ai-outbox-updated";
+
+const QUEUEABLE_ENDPOINTS = new Set([
+  "event-summary",
+  "analyze-photo",
+  "smart-query",
+  "detect-people",
+  "photobook-story",
+  "rewrite-caption",
+  "filter-relevance",
+]);
 
 export function getCustomApiKey(): string {
-  if (typeof window !== "undefined") {
-    return localStorage.getItem(KEY_STORAGE_NAME) || "";
-  }
   return "";
 }
 
-export function setCustomApiKey(key: string): void {
+export function setCustomApiKey(_key: string): void {
   if (typeof window !== "undefined") {
-    const trimmed = key.trim();
-    if (trimmed) {
-      localStorage.setItem(KEY_STORAGE_NAME, trimmed);
-    } else {
-      localStorage.removeItem(KEY_STORAGE_NAME);
-    }
     window.dispatchEvent(new Event(API_KEY_CHANGE_EVENT));
   }
 }
 
 export function removeCustomApiKey(): void {
   if (typeof window !== "undefined") {
-    localStorage.removeItem(KEY_STORAGE_NAME);
     window.dispatchEvent(new Event(API_KEY_CHANGE_EVENT));
   }
 }
 
 export function getEffectiveApiKey(): string {
-  const customKey = getCustomApiKey();
-  if (customKey) return customKey;
-  if (typeof window !== "undefined" && (window as any).__userGeminiApiKey) {
-    return (window as any).__userGeminiApiKey;
-  }
   return "SERVER_SIDE_MANAGED";
 }
 
 export function hasAiApiKey(): boolean {
-  return true; // Supported via server-side Gemini proxy routes
+  return true; // Managed securely via /api/ai/* server-side proxy
+}
+
+async function emitOutboxCount(flushing: boolean = false): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    const pendingCount = await db.aiOutbox.where("status").equals("pending").count();
+    window.dispatchEvent(
+      new CustomEvent(AI_OUTBOX_UPDATED_EVENT, {
+        detail: { pendingCount, flushing },
+      })
+    );
+  } catch {
+    // ignore if table not ready
+  }
+}
+
+async function enqueueAiRequest(endpoint: string, payload: any, errorReason: string): Promise<void> {
+  if (!QUEUEABLE_ENDPOINTS.has(endpoint)) return;
+  try {
+    const dedupeKey = `${endpoint}:${JSON.stringify(payload).slice(0, 240)}`;
+    const existing = await db.aiOutbox.where("dedupeKey").equals(dedupeKey).first();
+    if (existing) return;
+
+    await db.aiOutbox.add({
+      endpoint,
+      payload,
+      dedupeKey,
+      status: "pending",
+      retries: 0,
+      createdAt: Date.now(),
+      lastError: errorReason,
+    });
+    await emitOutboxCount(false);
+  } catch (err) {
+    console.warn("[AI Outbox] Enqueue skipped:", err);
+  }
+}
+
+let isFlushingOutbox = false;
+
+/**
+ * Flush queued offline AI requests when connectivity is restored.
+ */
+export async function flushAiOutbox(): Promise<{ processed: number; remaining: number }> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    const remaining = await db.aiOutbox.where("status").equals("pending").count().catch(() => 0);
+    return { processed: 0, remaining };
+  }
+  if (isFlushingOutbox) {
+    const remaining = await db.aiOutbox.where("status").equals("pending").count().catch(() => 0);
+    return { processed: 0, remaining };
+  }
+
+  isFlushingOutbox = true;
+  let processed = 0;
+
+  try {
+    const pendingItems = await db.aiOutbox.where("status").equals("pending").toArray();
+    if (pendingItems.length === 0) {
+      await emitOutboxCount(false);
+      return { processed: 0, remaining: 0 };
+    }
+
+    await emitOutboxCount(true);
+
+    for (const item of pendingItems) {
+      if (typeof navigator !== "undefined" && !navigator.onLine) break;
+      try {
+        const res = await fetch(`/api/ai/${item.endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(item.payload || {}),
+        });
+
+        if (res.ok) {
+          const json = await res.json();
+          if (item.endpoint === "analyze-photo" && json?.data && item.payload?.photoPath) {
+            try {
+              const target = await db.photos.where("path").equals(item.payload.photoPath).first();
+              if (target?.id) {
+                await db.photos.update(target.id, {
+                  tags: json.data.tags || target.tags,
+                  aestheticScore: json.data.aestheticScore ?? target.aestheticScore,
+                  description: json.data.description || target.description,
+                  category: json.data.category || target.category,
+                  ocrText: json.data.ocrText || target.ocrText,
+                  status: "analyzed",
+                });
+                window.dispatchEvent(new CustomEvent("photos-database-updated"));
+              }
+            } catch {}
+          }
+          if (item.id) await db.aiOutbox.delete(item.id);
+          processed++;
+        } else {
+          if (item.id) {
+            await db.aiOutbox.update(item.id, {
+              retries: item.retries + 1,
+              status: item.retries >= 2 ? "failed" : "pending",
+              lastError: `HTTP ${res.status}`,
+            });
+          }
+        }
+      } catch (err: any) {
+        if (item.id) {
+          await db.aiOutbox.update(item.id, {
+            retries: item.retries + 1,
+            status: item.retries >= 3 ? "failed" : "pending",
+            lastError: err?.message || "Network error",
+          });
+        }
+      }
+    }
+  } finally {
+    isFlushingOutbox = false;
+    await emitOutboxCount(false);
+  }
+
+  const remaining = await db.aiOutbox.where("status").equals("pending").count().catch(() => 0);
+  return { processed, remaining };
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => {
+    flushAiOutbox().catch(() => {});
+  });
+  setTimeout(() => {
+    if (navigator.onLine) {
+      flushAiOutbox().catch(() => {});
+    } else {
+      emitOutboxCount(false).catch(() => {});
+    }
+  }, 1500);
 }
 
 async function callAiProxy<T>(endpoint: string, payload: any, fallback: T): Promise<T> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    await enqueueAiRequest(endpoint, payload, "Offline");
+    return fallback;
+  }
+
   try {
-    const customKey = getCustomApiKey();
     const response = await fetch(`/api/ai/${endpoint}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(customKey ? { "x-custom-api-key": customKey } : {})
       },
-      body: JSON.stringify({
-        ...payload,
-        customApiKey: customKey || undefined
-      })
+      body: JSON.stringify(payload || {})
     });
 
     if (!response.ok) {
@@ -70,6 +200,7 @@ async function callAiProxy<T>(endpoint: string, payload: any, fallback: T): Prom
     return fallback;
   } catch (err: any) {
     console.warn(`[AI Proxy Network Fail / ${endpoint}]:`, err?.message || err);
+    await enqueueAiRequest(endpoint, payload, err?.message || "Network error");
     return fallback;
   }
 }
@@ -148,7 +279,7 @@ export async function generatePhotobookStory(
   photoDetails: any[],
   storyTone: string = "lyrical"
 ): Promise<PhotobookAiStory> {
-  const toneTitle = 
+  const toneTitle =
     storyTone === 'travel' ? "낯선 바람이 머문 길목" :
     storyTone === 'family' ? "함께여서 눈부신 날들" :
     storyTone === 'minimal' ? "빛과 침묵의 시간" : "빛나는 시간의 조각들";
@@ -179,7 +310,7 @@ export async function animateImageIntoVideo(
   prompt: string = "",
   aspectRatio: "16:9" | "9:16" = "16:9"
 ): Promise<{ videoData: string; mimeType: string } | null> {
-  const res = await callAiProxy<{ videoData: string; mimeType: string }>(
+  const res = await callAiProxy<{ videoData: string; mimeType: string } | null>(
     "animate-image",
     { imageData, prompt, aspectRatio },
     null
@@ -201,10 +332,6 @@ export interface RelevanceResult {
   reasons: Record<string, string>;
 }
 
-/**
- * Uses AI to identify photos that are meaningless, low-quality, or irrelevant to a memory photobook.
- * Filters out screenshots, receipts, documents, and extremely blurry photos.
- */
 export async function filterIrrelevantPhotos(
   photos: { id: string | number; tags: string[]; category?: string; aestheticScore?: number; ocrText?: string }[],
   albumTitle?: string
